@@ -90,6 +90,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+def get_subordinate_user_employee_nos(db, manager_dn: str, visited=None):
+    if visited is None:
+        visited = set()
+    if not manager_dn or manager_dn in visited:
+        return []
+    visited.add(manager_dn)
+    
+    subordinates = []
+    direct_reports = db.query(models.User).filter(models.User.manager_dn == manager_dn).all()
+    for report in direct_reports:
+        if report.employee_no not in subordinates:
+            subordinates.append(report.employee_no)
+        if report.user_dn:
+            subs = get_subordinate_user_employee_nos(db, report.user_dn, visited)
+            for s in subs:
+                if s not in subordinates:
+                    subordinates.append(s)
+    return subordinates
+
+def get_allowed_employee_nos(db, current_user):
+    if current_user.role == "system_admin":
+        return None
+    allowed = [current_user.employee_no]
+    if current_user.user_dn:
+        subs = get_subordinate_user_employee_nos(db, current_user.user_dn)
+        allowed.extend(subs)
+    return allowed
+
 # --- AUTH ENDPOINTS ---
 @app.post("/api/login", response_model=schemas.User)
 def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
@@ -116,46 +145,20 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
         if not auth_result["success"]:
             raise HTTPException(status_code=401, detail=auth_result["message"])
             
-        # Resolve Role
+                # Note: Role is stripped down. Everyone is an employee unless they are admin.
+        # Manager hierarchy is driven by AD. We keep role='employee'.
         resolved_role = "employee"
-        ldap_groups = auth_result.get("groups", [])
-        if config.group_sysadmin and config.group_sysadmin in ldap_groups:
+        if creds.employee_no == "admin":
             resolved_role = "system_admin"
-        elif config.group_manager and config.group_manager in ldap_groups:
-            resolved_role = "manager"
-        elif config.group_employee and config.group_employee in ldap_groups:
-            resolved_role = "employee"
-            
-        # Resolve Team dynamically from LDAP groups
-        resolved_team_id = None
-        role_groups = [config.group_sysadmin, config.group_manager, config.group_employee]
         
-        for group_dn in ldap_groups:
-            if group_dn not in role_groups:
-                # Extract CN for friendly team name
-                # e.g. CN=DevOps & SRE,CN=Users... -> DevOps & SRE
-                cn_part = group_dn.split(",")[0]
-                if cn_part.upper().startswith("CN="):
-                    team_name = cn_part[3:]
-                    # Get or auto-create the Team
-                    team = db.query(models.Team).filter(models.Team.ldap_group_id == group_dn).first()
-                    if not team:
-                        team = models.Team(name=team_name, ldap_group_id=group_dn)
-                        db.add(team)
-                        db.commit()
-                        db.refresh(team)
-                    resolved_team_id = team.id
-                    break # Assign the first non-role group as their primary team
-                    
+        # Determine top-level log prints
         print(f"LDAP USER: {creds.employee_no}")
         print(f"USER DN: {auth_result.get('user_dn')}")
-        print(f"LDAP GROUPS FOUND: {ldap_groups}")
         print(f"MANAGER DN: {auth_result.get('manager_dn')}")
         print(f"MANAGER NAME: {auth_result.get('manager_name')}")
-        print(f"RESOLVED TEAM: {resolved_team_id}")
-        print(f"RESOLVED PERMISSIONS: {resolved_role}")
 
         # Sync LDAP Identity to local DB for foreign keys
+        
         user = db.query(models.User).filter(models.User.employee_no == auth_result["employee_no"]).first()
         if not user:
             user = models.User(
@@ -163,17 +166,19 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
                 name=auth_result["name"],
                 password="ldap_managed",
                 role=resolved_role,
-                team_id=resolved_team_id,
+                team_id=None,
                 manager_dn=auth_result.get("manager_dn"),
-                manager_name=auth_result.get("manager_name")
+                manager_name=auth_result.get("manager_name"),
+                user_dn=auth_result.get('user_dn')
             )
             db.add(user)
         else:
             user.name = auth_result["name"]
             user.role = resolved_role
-            user.team_id = resolved_team_id
+            user.team_id = None
             user.manager_dn = auth_result.get("manager_dn")
             user.manager_name = auth_result.get("manager_name")
+            user.user_dn = auth_result.get('user_dn')
         import secrets
         user.session_token = secrets.token_hex(32)
         db.commit()
@@ -211,7 +216,6 @@ def create_overtime(record: schemas.OvertimeCreate, current_user: models.User = 
     record_dict = record.dict()
     record_dict['employee_no'] = current_user.employee_no
     record_dict['name'] = current_user.name
-    record_dict['team_id'] = current_user.team_id
     
     db_record = models.OvertimeRecord(
         **record_dict,
@@ -230,16 +234,9 @@ def update_overtime(record_id: int, update_data: dict, current_user: models.User
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    req_user = current_user
-    if req_user.role == "employee":
-        if "status" in update_data and update_data["status"] in ["Approved", "Rejected", "Returned"]:
-            raise HTTPException(status_code=403, detail="Forbidden: Employees cannot approve/reject requests.")
-        if db_record.employee_no != req_user.employee_no:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only modify your own requests.")
-            
-    elif req_user.role == "manager":
-        if db_record.team_id != req_user.team_id:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only modify requests for your assigned team.")
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
 
         
     if "status" in update_data and update_data["status"] in ["Approved", "Rejected"]:
@@ -260,14 +257,9 @@ def delete_overtime(record_id: int, current_user: models.User = Depends(get_curr
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    req_user = current_user
-    if req_user.role == "employee":
-        if db_record.employee_no != req_user.employee_no:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only delete your own requests.")
-            
-    elif req_user.role == "manager":
-        if db_record.team_id != req_user.team_id:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only delete requests for your assigned team.")
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to delete this record.")
     
     db.delete(db_record)
     db.commit()
@@ -276,10 +268,9 @@ def delete_overtime(record_id: int, current_user: models.User = Depends(get_curr
 @app.get("/api/overtime", response_model=List[schemas.Overtime])
 def get_overtimes(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     query = db.query(models.OvertimeRecord)
-    if current_user.role == "manager":
-        query = query.filter(models.OvertimeRecord.team_id == current_user.team_id)
-    elif current_user.role != "system_admin":
-        query = query.filter(models.OvertimeRecord.employee_no == current_user.employee_no)
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None:
+        query = query.filter(models.OvertimeRecord.employee_no.in_(allowed_nos))
     return query.order_by(models.OvertimeRecord.start_datetime.desc()).all()
 
 # --- ADMIN ENDPOINTS ---
@@ -411,7 +402,6 @@ def create_wfh(record: schemas.WFHCreate, current_user: models.User = Depends(ge
     record_dict = record.dict()
     record_dict['employee_no'] = current_user.employee_no
     record_dict['name'] = current_user.name
-    record_dict['team_id'] = current_user.team_id
     
     db_record = models.WFHRecord(
         **record_dict,
@@ -431,16 +421,9 @@ def update_wfh(record_id: int, update_data: dict, current_user: models.User = De
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    req_user = current_user
-    if req_user.role == "employee":
-        if "status" in update_data and update_data["status"] in ["Approved", "Rejected", "Returned"]:
-            raise HTTPException(status_code=403, detail="Forbidden: Employees cannot approve/reject requests.")
-        if db_record.employee_no != req_user.employee_no:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only modify your own requests.")
-            
-    elif req_user.role == "manager":
-        if db_record.team_id != req_user.team_id:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only modify requests for your assigned team.")
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
 
     
     if "status" in update_data and update_data["status"] in ["Approved", "Rejected", "Returned"]:
@@ -466,14 +449,9 @@ def delete_wfh(record_id: int, current_user: models.User = Depends(get_current_u
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    req_user = current_user
-    if req_user.role == "employee":
-        if db_record.employee_no != req_user.employee_no:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only delete your own requests.")
-            
-    elif req_user.role == "manager":
-        if db_record.team_id != req_user.team_id:
-            raise HTTPException(status_code=403, detail="Forbidden: You can only delete requests for your assigned team.")
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to delete this record.")
     db.delete(db_record)
     db.commit()
     return {"message": "Deleted successfully"}
@@ -489,13 +467,13 @@ def get_wfh_records(
     db: Session = Depends(get_db)
 ):
     query = db.query(models.WFHRecord)
-    req_user = current_user
-    if req_user.role == "manager":
-        query = query.filter(models.WFHRecord.team_id == req_user.team_id)
-    elif req_user.role != "system_admin":
-        query = query.filter(models.WFHRecord.employee_no == req_user.employee_no)
-            
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None:
+        query = query.filter(models.WFHRecord.employee_no.in_(allowed_nos))
+        
     if employee_no:
+        if allowed_nos is not None and employee_no not in allowed_nos:
+            raise HTTPException(status_code=403, detail="Forbidden")
         query = query.filter(models.WFHRecord.employee_no == employee_no)
     
     query = query.order_by(models.WFHRecord.id.desc())
@@ -590,13 +568,37 @@ def get_teams(current_user: models.User = Depends(get_current_user), db: Session
 @app.get("/api/users")
 def get_users(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     query = db.query(models.User)
-    req_user = current_user
-    if req_user.role == "manager":
-        query = query.filter(models.User.team_id == req_user.team_id)
-    elif req_user.role != "system_admin":
-        query = query.filter(models.User.employee_no == req_user.employee_no)
+    allowed_nos = get_allowed_employee_nos(db, current_user)
+    if allowed_nos is not None:
+        query = query.filter(models.User.employee_no.in_(allowed_nos))
     users = query.all()
-    return [{"employee_no": u.employee_no, "name": u.name, "team_id": u.team_id} for u in users]
+    return [{"employee_no": u.employee_no, "name": u.name,} for u in users]
+
+
+@app.get("/api/users/hierarchy")
+def get_user_hierarchy(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Calculate hierarchy
+    if current_user.role == "system_admin":
+        return {"subordinates": []} # Or all users if admin dashboard needed
+        
+    subs = []
+    if current_user.user_dn:
+        sub_nos = get_subordinate_user_employee_nos(db, current_user.user_dn)
+        if sub_nos:
+            users = db.query(models.User).filter(models.User.employee_no.in_(sub_nos)).all()
+            for u in users:
+                subs.append({"employee_no": u.employee_no, "name": u.name, "manager_name": u.manager_name})
+                
+    # Direct reports are those whose manager_dn == current_user.user_dn
+    direct_reports = []
+    if current_user.user_dn:
+        dr = db.query(models.User).filter(models.User.manager_dn == current_user.user_dn).all()
+        direct_reports = [{"employee_no": u.employee_no, "name": u.name} for u in dr]
+        
+    return {
+        "direct_reports": direct_reports,
+        "all_subordinates": subs
+    }
 
 @app.get("/api/admin/ldap/config", response_model=schemas.LDAPSettingsResponse)
 def get_ldap_config(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):

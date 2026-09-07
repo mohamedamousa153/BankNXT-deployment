@@ -129,7 +129,7 @@ function App() {
               </>
             ) : (
               <>
-                <NavButton active={activeTab === 'admin-dashboard'} onClick={() => setActiveTab('admin-dashboard')} icon={user.role === 'manager' ? "👥" : "📊"}>{user.role === 'manager' ? "Team Dashboard" : "Global Dashboard"}</NavButton>
+                <NavButton active={activeTab === 'admin-dashboard'} onClick={() => setActiveTab('admin-dashboard')} icon={user.role === 'manager' ? "👥" : "📊"}>{user.role === 'manager' ? "My Reports" : "Global Dashboard"}</NavButton>
                 {user.role === 'system_admin' && <NavButton active={activeTab === 'admin-settings'} onClick={() => setActiveTab('admin-settings')} icon="⚙️">Settings</NavButton>}
               </>
             )}
@@ -458,893 +458,150 @@ function WFH({ user }) {
 // ADMIN DASHBOARD (ANALYTICS)
 // ============================
 
-function TeamOverview({ wfh, overtime, teams, users, selectedTeam, setSelectedTeam, dateFilter, formatDateOnly, getWFHDaysCount, user, handleAction }) {
-    const teamMembers = users.filter(u => u.team_id == selectedTeam);
-    const memberNos = new Set(teamMembers.map(u => String(u.employee_no)));
+function HierarchyOverview({ wfh, overtime, hierarchy, users, viewFilter, setViewFilter, dateFilter, formatDateOnly, getWFHDaysCount, user, handleAction }) {
+    // viewFilter: 'direct' or 'all'
+    const displayUsers = viewFilter === 'direct' ? hierarchy.direct_reports : hierarchy.all_subordinates;
+    const memberNos = new Set(displayUsers.map(u => String(u.employee_no)));
     
     const teamWfh = wfh.filter(r => memberNos.has(String(r.employee_no)));
     const teamOt = overtime.filter(r => memberNos.has(String(r.employee_no)));
     
-    // KPIs
     const totalWfhDays = teamWfh.reduce((acc, r) => acc + getWFHDaysCount(r), 0);
     const pendingWfh = teamWfh.filter(r => r.status === 'Pending Approval').length;
     const totalOtHours = teamOt.reduce((acc, r) => acc + (r.duration_hours || 0), 0);
     const pendingOt = teamOt.filter(r => r.status === 'Pending Approval').length;
-    
-    // WFH Today
-    const todayStr = new Date().toISOString().split('T')[0];
+
     const wfhToday = teamWfh.filter(r => {
-        if (r.selected_dates) {
-            try { return JSON.parse(r.selected_dates).includes(todayStr); } catch(e) { return false; }
-        }
-        if (r.date) {
-            let cur = new Date(r.date);
-            let end = r.end_date ? new Date(r.end_date) : cur;
-            while (cur <= end) {
-                if (cur.toISOString().split('T')[0] === todayStr) return true;
-                cur.setDate(cur.getDate() + 1);
-            }
-        }
-        return false;
+        if (!r.selected_dates) return false;
+        try {
+            return JSON.parse(r.selected_dates).includes(formatDateOnly(new Date()));
+        } catch { return false; }
     });
 
-    // Employee Summary
-    const empSummary = teamMembers.map(emp => {
+    const empSummary = displayUsers.map(emp => {
         const empWfh = teamWfh.filter(r => String(r.employee_no) === String(emp.employee_no));
         const empOt = teamOt.filter(r => String(r.employee_no) === String(emp.employee_no));
         return {
             ...emp,
-            wfhDays: empWfh.reduce((acc, r) => acc + getWFHDaysCount(r), 0),
-            pendingWfh: empWfh.filter(r => r.status === 'Pending Approval').length,
-            otHours: empOt.reduce((acc, r) => acc + (r.duration_hours || 0), 0),
-            pendingOt: empOt.filter(r => r.status === 'Pending Approval').length,
-            otRequests: empOt.length,
-            approvedOt: empOt.filter(r => r.status === 'Approved').length,
-            rejectedOt: empOt.filter(r => ['Rejected', 'Cancelled'].includes(r.status)).length
+            wfh_count: empWfh.reduce((acc, r) => acc + getWFHDaysCount(r), 0),
+            wfh_pending: empWfh.filter(r => r.status === 'Pending Approval').length,
+            ot_hours: empOt.reduce((acc, r) => acc + (r.duration_hours || 0), 0),
+            ot_pending: empOt.filter(r => r.status === 'Pending Approval').length
         };
-    });
+    }).sort((a,b) => b.wfh_count - a.wfh_count);
 
     return (
-        <div>
-            <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-bold text-slate-800">Team Dashboard</h3>
-                {user.role === 'system_admin' ? (
-                <select className="border rounded-lg p-2 font-medium text-slate-700" value={selectedTeam} onChange={e => setSelectedTeam(e.target.value)}>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                ) : (
-                    <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">{teams.find(t => t.id == selectedTeam)?.name || "My Team"}</span>
-                )}
+        <div className="space-y-6">
+            <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                <h3 className="text-xl font-bold text-slate-800">My Reports Dashboard</h3>
+                <div className="flex gap-4 items-center">
+                    <select className="border rounded-lg p-2 font-medium text-slate-700" value={viewFilter} onChange={e => setViewFilter(e.target.value)}>
+                        <option value="direct">Direct Reports ({hierarchy.direct_reports.length})</option>
+                        <option value="all">All Subordinates ({hierarchy.all_subordinates.length})</option>
+                    </select>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Total Employees</div>
+                    <p className="text-2xl font-black text-slate-700">{displayUsers.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Pending WFH</div>
+                    <p className="text-2xl font-black text-blue-600">{pendingWfh}</p>
+                    <p className="text-xs text-slate-400 mt-1">{totalWfhDays} total WFH days</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">Pending Overtime</div>
+                    <p className="text-2xl font-black text-amber-600">{pendingOt}</p>
+                    <p className="text-xs text-slate-400 mt-1">{totalOtHours} total hours</p>
+                </div>
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <div className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">WFH Today</div>
+                    <p className="text-2xl font-black text-emerald-600">{wfhToday.length}</p>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <h3 className="font-bold text-slate-700 mb-4">Pending WFH Approvals</h3>
+                    <div className="space-y-3">
+                        {teamWfh.filter(r => r.status === 'Pending Approval').length > 0 ? (
+                            teamWfh.filter(r => r.status === 'Pending Approval').map(r => (
+                                <div key={r.id} className="border p-3 rounded-lg flex justify-between items-center">
+                                    <div>
+                                        <p className="font-bold">{r.name} ({r.employee_no})</p>
+                                        <p className="text-sm text-slate-500">{getWFHDaysCount(r)} Days: {r.selected_dates ? JSON.parse(r.selected_dates).join(', ') : r.date}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleAction('wfh', r.id, 'Approved')} className="bg-emerald-500 text-white px-3 py-1 rounded text-sm hover:bg-emerald-600 font-bold">Approve</button>
+                                        <button onClick={() => handleAction('wfh', r.id, 'Rejected')} className="bg-rose-500 text-white px-3 py-1 rounded text-sm hover:bg-rose-600 font-bold">Reject</button>
+                                    </div>
+                                </div>
+                            ))
+                        ) : <p className="text-slate-400 text-sm">No pending requests.</p>}
+                    </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                    <h3 className="font-bold text-slate-700 mb-4">Pending Overtime Approvals</h3>
+                    <div className="space-y-3">
+                        {teamOt.filter(r => r.status === 'Pending Approval').length > 0 ? (
+                            teamOt.filter(r => r.status === 'Pending Approval').map(r => (
+                                <div key={r.id} className="border p-3 rounded-lg flex justify-between items-center">
+                                    <div>
+                                        <p className="font-bold">{r.name} ({r.employee_no})</p>
+                                        <p className="text-sm text-slate-500">{r.start_datetime.split('T')[0]} - {r.duration_hours} hrs</p>
+                                        <p className="text-xs text-slate-400 truncate w-48">{r.assigned_work}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => handleAction('overtime', r.id, 'Approved')} className="bg-emerald-500 text-white px-3 py-1 rounded text-sm hover:bg-emerald-600 font-bold">Approve</button>
+                                        <button onClick={() => handleAction('overtime', r.id, 'Rejected')} className="bg-rose-500 text-white px-3 py-1 rounded text-sm hover:bg-rose-600 font-bold">Reject</button>
+                                    </div>
+                                </div>
+                            ))
+                        ) : <p className="text-slate-400 text-sm">No pending requests.</p>}
+                    </div>
+                </div>
             </div>
             
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Members</p>
-                    <p className="text-2xl font-black text-slate-700">{teamMembers.length}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">WFH Today</p>
-                    <p className="text-2xl font-black text-slate-700">{wfhToday.length}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">WFH Days</p>
-                    <p className="text-2xl font-black text-slate-700">{totalWfhDays}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Pending WFH</p>
-                    <p className="text-2xl font-black text-slate-700">{pendingWfh}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">OT Hours</p>
-                    <p className="text-2xl font-black text-slate-700">{totalOtHours}</p>
-                </div>
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-                    <p className="text-xs font-bold text-slate-400 uppercase">Pending OT</p>
-                    <p className="text-2xl font-black text-slate-700">{pendingOt}</p>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                    <h3 className="font-bold text-slate-700 mb-4 text-emerald-600 flex items-center gap-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
-                        Working From Home Today
-                    </h3>
-                    {wfhToday.length > 0 ? (
-                        <div className="overflow-x-auto"><table className="w-full text-left text-sm min-w-[500px]">
-                            <thead className="bg-slate-50 border-b">
-                                <tr>
-                                    <th className="p-3">Employee</th>
-                                    <th className="p-3">ID</th>
-                                    <th className="p-3">Type</th>
-                                    <th className="p-3">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {wfhToday.map(r => (
-                                    <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                                        <td className="p-3 font-medium text-slate-800">{r.name}</td>
-                                        <td className="p-3 text-slate-500">{r.employee_no}</td>
-                                        <td className="p-3 text-slate-500">{r.wfh_type}</td>
-                                        <td className="p-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${r.status==='Approved'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{r.status}</span></td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table></div>
-                    ) : <p className="text-slate-400 text-sm py-4">No team members working from home today.</p>}
-                </div>
-
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                    <h3 className="font-bold text-slate-700 mb-4">Team Employee Summary</h3>
-                    <div className="overflow-x-auto"><table className="w-full text-left text-sm min-w-[500px]">
-                        <thead className="bg-slate-50 border-b">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-4">Employee Overview ({displayUsers.length})</h3>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-50 text-slate-600">
                             <tr>
-                                <th className="p-3">Employee</th>
-                                <th className="p-3">WFH Days</th>
-                                <th className="p-3">Pend. WFH</th>
-                                <th className="p-3">OT Hrs</th>
-                                <th className="p-3">Pend. OT</th>
+                                <th className="p-3 rounded-tl-lg">Employee</th>
+                                <th className="p-3">Manager</th>
+                                <th className="p-3 text-center">WFH Days (Total)</th>
+                                <th className="p-3 text-center">WFH Pending</th>
+                                <th className="p-3 text-center">OT Hours (Total)</th>
+                                <th className="p-3 text-center rounded-tr-lg">OT Pending</th>
                             </tr>
                         </thead>
                         <tbody>
                             {empSummary.map(emp => (
                                 <tr key={emp.employee_no} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{emp.name}</td>
-                                    <td className="p-3 text-slate-500">{emp.wfhDays}</td>
-                                    <td className="p-3 text-amber-600 font-bold">{emp.pendingWfh || '-'}</td>
-                                    <td className="p-3 text-slate-500">{emp.otHours}</td>
-                                    <td className="p-3 text-amber-600 font-bold">{emp.pendingOt || '-'}</td>
+                                    <td className="p-3 font-medium">{emp.name} ({emp.employee_no})</td>
+                                    <td className="p-3">{emp.manager_name || 'N/A'}</td>
+                                    <td className="p-3 text-center">{emp.wfh_count}</td>
+                                    <td className="p-3 text-center text-blue-600 font-bold">{emp.wfh_pending > 0 ? emp.wfh_pending : '-'}</td>
+                                    <td className="p-3 text-center">{emp.ot_hours}</td>
+                                    <td className="p-3 text-center text-amber-600 font-bold">{emp.ot_pending > 0 ? emp.ot_pending : '-'}</td>
                                 </tr>
                             ))}
-                        </tbody>
-                    </table></div>
-                </div>
-                
-                </div>
-            
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 mb-8 overflow-hidden">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-slate-700">Team Weekly WFH View</h3>
-                </div>
-                <div className="overflow-x-auto"><table className="w-full text-center text-sm min-w-[600px]">
-                    <thead className="bg-slate-50 border-b">
-                        <tr>
-                            <th className="p-3 text-left">Employee</th>
-                            <th className="p-3">Sun</th>
-                            <th className="p-3">Mon</th>
-                            <th className="p-3">Tue</th>
-                            <th className="p-3">Wed</th>
-                            <th className="p-3">Thu</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {teamMembers.map(emp => {
-                            const empWfh = teamWfh.filter(r => String(r.employee_no) === String(emp.employee_no));
-                            let days = { 0: '🏢', 1: '🏢', 2: '🏢', 3: '🏢', 4: '🏢' }; // 0=Sun, 4=Thu
-                            empWfh.forEach(r => {
-                                if(r.status === 'Rejected' || r.status === 'Cancelled') return;
-                                if(r.selected_dates) {
-                                    try {
-                                        JSON.parse(r.selected_dates).forEach(d => {
-                                            const day = new Date(d).getDay(); // 0=Sun, 1=Mon
-                                            if (day >= 0 && day <= 4) days[day] = '🏠';
-                                        });
-                                    } catch(e){}
-                                }
-                            });
-                            return (
-                                <tr key={emp.employee_no} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 text-left font-medium text-slate-800">{emp.name}</td>
-                                    <td className="p-3 text-xl">{days[0]}</td>
-                                    <td className="p-3 text-xl">{days[1]}</td>
-                                    <td className="p-3 text-xl">{days[2]}</td>
-                                    <td className="p-3 text-xl">{days[3]}</td>
-                                    <td className="p-3 text-xl">{days[4]}</td>
+                            {empSummary.length === 0 && (
+                                <tr>
+                                    <td colSpan="6" className="p-4 text-center text-slate-500">No employees found.</td>
                                 </tr>
-                            );
-                        })}
-                    </tbody>
-                </table></div>
-            
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden mb-8">
-                    <h3 className="font-bold text-slate-700 mb-4">Team Overtime View</h3>
-                    <div className="overflow-x-auto"><table className="w-full text-left text-sm min-w-[600px]">
-                        <thead className="bg-slate-50 border-b">
-                            <tr>
-                                <th className="p-3">Employee</th>
-                                <th className="p-3">OT Requests</th>
-                                <th className="p-3">Total OT Hours</th>
-                                <th className="p-3 text-amber-600">Pending</th>
-                                <th className="p-3 text-emerald-600">Approved</th>
-                                <th className="p-3 text-red-600">Rejected</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {empSummary.filter(e => e.otRequests > 0).map(emp => (
-                                <tr key={emp.employee_no} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{emp.name}</td>
-                                    <td className="p-3 text-slate-500">{emp.otRequests}</td>
-                                    <td className="p-3 font-bold text-slate-700">{emp.otHours}</td>
-                                    <td className="p-3">{emp.pendingOt || '-'}</td>
-                                    <td className="p-3">{emp.approvedOt || '-'}</td>
-                                    <td className="p-3">{emp.rejectedOt || '-'}</td>
-                                </tr>
-                            ))}
+                            )}
                         </tbody>
-                    </table></div>
+                    </table>
                 </div>
-
-            
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden mb-8">
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingWfh}</span> Pending WFH Approvals</h3>
-                {pendingWfh === 0 ? <p className="text-slate-400 text-sm">No pending WFH requests.</p> : (
-                    <div className="overflow-x-auto"><table className="w-full text-left text-sm min-w-[800px]">
-                        <thead className="bg-slate-50 border-b">
-                            <tr><th className="p-3">Employee</th><th className="p-3">Dates</th><th className="p-3">Reason</th><th className="p-3 text-right">Actions</th></tr>
-                        </thead>
-                        <tbody>
-                            {teamWfh.filter(r => r.status === 'Pending Approval').map(r => (
-                                <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{r.name}</td>
-                                    <td className="p-3 text-slate-500">{r.selected_dates ? JSON.parse(r.selected_dates).map(d => formatDateOnly(d)).join(', ') : formatDateOnly(r.date)}</td>
-                                    <td className="p-3 text-slate-500 truncate max-w-[200px]">{r.reason || '-'}</td>
-                                    <td className="p-3 flex gap-2 justify-end">
-                                        <button onClick={()=>handleAction('wfh', r.id, 'Approved')} className="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-emerald-200">Approve</button>
-                                        <button onClick={()=>handleAction('wfh', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
-                                        <button onClick={()=>handleAction('wfh', r.id, 'Returned')} className="bg-amber-100 text-amber-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-amber-200">Return</button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table></div>
-                )}
             </div>
-
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden mb-8">
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingOt}</span> Pending OT Approvals</h3>
-                {pendingOt === 0 ? <p className="text-slate-400 text-sm">No pending OT requests.</p> : (
-                    <div className="overflow-x-auto"><table className="w-full text-left text-sm min-w-[800px]">
-                        <thead className="bg-slate-50 border-b">
-                            <tr><th className="p-3">Employee</th><th className="p-3">Start</th><th className="p-3">Hrs</th><th className="p-3">Reason</th><th className="p-3 text-right">Actions</th></tr>
-                        </thead>
-                        <tbody>
-                            {teamOt.filter(r => r.status === 'Pending Approval').map(r => (
-                                <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{r.name}</td>
-                                    <td className="p-3 text-slate-500">{r.start_datetime ? new Date(r.start_datetime).toLocaleString() : '-'}</td>
-                                    <td className="p-3 font-bold">{r.duration_hours}</td>
-                                    <td className="p-3 text-slate-500 truncate max-w-[200px]">{r.assigned_work || '-'}</td>
-                                    <td className="p-3 flex gap-2 justify-end">
-                                        <button onClick={()=>handleAction('ot', r.id, 'Approved')} className="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-emerald-200">Approve</button>
-                                        <button onClick={()=>handleAction('ot', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table></div>
-                )}
-            </div>
-
-<div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden col-span-1 lg:col-span-2 mb-8">
-                    <h3 className="font-bold text-slate-700 mb-4">Team WFH Requests</h3>
-                    <div className="overflow-x-auto overflow-y-auto max-h-[320px]"><table className="w-full text-left text-sm min-w-[800px]">
-                        <thead className="bg-slate-50 border-b sticky top-0 z-10">
-                            <tr>
-                                <th className="p-3">Employee</th>
-                                <th className="p-3">Dates</th>
-                                <th className="p-3">Type</th>
-                                <th className="p-3">Reason</th>
-                                <th className="p-3">Status</th>
-                                <th className="p-3">Approver</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {teamWfh.map(r => (
-                                <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{r.name}</td>
-                                    <td className="p-3 text-slate-500">{r.selected_dates ? JSON.parse(r.selected_dates).map(d => formatDateOnly(d)).join(', ') : formatDateOnly(r.date)}</td>
-                                    <td className="p-3 text-slate-500">{r.wfh_type}</td>
-                                    <td className="p-3 text-slate-500 truncate max-w-[150px]">{r.reason || '-'}</td>
-                                    <td className="p-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${r.status==='Approved'?'bg-emerald-100 text-emerald-700':r.status==='Pending Approval'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{r.status}</span></td>
-                                    <td className="p-3 text-slate-500">{r.approved_by || '-'}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table></div>
-                </div>
-                
-                
-            <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-hidden col-span-1 lg:col-span-2 mb-8">
-                    <h3 className="font-bold text-slate-700 mb-4">Team Overtime Requests</h3>
-                    <div className="overflow-x-auto overflow-y-auto max-h-[320px]"><table className="w-full text-left text-sm min-w-[800px]">
-                        <thead className="bg-slate-50 border-b sticky top-0 z-10">
-                            <tr>
-                                <th className="p-3">Employee</th>
-                                <th className="p-3">Start</th>
-                                <th className="p-3">End</th>
-                                <th className="p-3">Hrs</th>
-                                <th className="p-3">Reason</th>
-                                <th className="p-3">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {teamOt.map(r => (
-                                <tr key={r.id} className="border-b last:border-0 hover:bg-slate-50">
-                                    <td className="p-3 font-medium text-slate-800">{r.name}</td>
-                                    <td className="p-3 text-slate-500">{r.start_datetime ? new Date(r.start_datetime).toLocaleString() : '-'}</td>
-                                    <td className="p-3 text-slate-500">{r.end_datetime ? new Date(r.end_datetime).toLocaleString() : '-'}</td>
-                                    <td className="p-3 font-bold">{r.duration_hours}</td>
-                                    <td className="p-3 text-slate-500 truncate max-w-[150px]">{r.assigned_work || '-'}</td>
-                                    <td className="p-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${r.status==='Approved'?'bg-emerald-100 text-emerald-700':r.status==='Pending Approval'?'bg-amber-100 text-amber-700':'bg-red-100 text-red-700'}`}>{r.status}</span></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table></div>
-                </div>
-            
-            
-</div>
         </div>
     );
-}
-
-
-function LDAPSettingsPage({ user }) {
-  const [config, setConfig] = useState(null);
-  const [msg, setMsg] = useState("");
-  const [isError, setIsError] = useState(false);
-  const [testing, setTesting] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/admin/ldap/config')
-    .then(r => r.json())
-    .then(data => {
-        // Ensure defaults if missing
-        setConfig({
-            ...data,
-            server_url: data.server_url || '',
-            base_dn: data.base_dn || '',
-            bind_username: data.bind_username || '',
-            bind_password: data.bind_password || '',
-            user_search_base: data.user_search_base || '',
-            user_search_filter: data.user_search_filter || '',
-            group_search_base: data.group_search_base || '',
-            group_membership_attr: data.group_membership_attr || 'uniqueMember',
-            group_sysadmin: data.group_sysadmin || '',
-            group_manager: data.group_manager || '',
-            group_employee: data.group_employee || ''
-        });
-    });
-  }, [user]);
-
-  const handleChange = (e) => {
-      const { name, value, type, checked } = e.target;
-      setConfig(prev => ({
-          ...prev,
-          [name]: type === 'checkbox' ? checked : value
-      }));
-  };
-
-  const handleSave = async (e) => {
-      e.preventDefault();
-      try {
-          const res = await fetch('/api/admin/ldap/config', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(config)
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || 'Error saving');
-          setConfig(data);
-          setMsg("Configuration saved successfully.");
-          setIsError(false);
-          setTimeout(() => setMsg(""), 3000);
-      } catch (err) {
-          setMsg(err.message);
-          setIsError(true);
-      }
-  };
-
-  const handleTest = async () => {
-      setTesting(true);
-      setMsg("Testing connection...");
-      setIsError(false);
-      try {
-          const res = await fetch('/api/admin/ldap/test-connection', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(config)
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.detail || 'Connection failed');
-          setMsg(`✓ ${data.message}`);
-          setIsError(false);
-      } catch (err) {
-          setMsg(`✗ LDAP connection failed: ${err.message}`);
-          setIsError(true);
-      } finally {
-          setTesting(false);
-      }
-  };
-
-  if (!config) return <div className="p-6">Loading configuration...</div>;
-
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 max-w-4xl mx-auto">
-        <h2 className="text-2xl font-bold text-slate-800 mb-6">LDAP / Active Directory Configuration</h2>
-        
-        {msg && (
-            <div className={`p-4 rounded-lg mb-6 font-bold ${isError ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                {msg}
-            </div>
-        )}
-        
-        <form onSubmit={handleSave} className="space-y-8">
-            {/* Status */}
-            <div>
-                <label className="flex items-center gap-2 font-bold text-slate-700">
-                    <input type="checkbox" name="enabled" checked={config.enabled} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" />
-                    Enable LDAP Authentication
-                </label>
-                <p className="text-sm text-slate-500 mt-1 ml-7">If disabled, the system will use local authentication.</p>
-            </div>
-
-            {/* Connection */}
-            <div>
-                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">Connection Settings</h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <div><label className="block text-xs font-bold mb-1">LDAP Server Host / IP</label><input type="text" name="server_url" value={config.server_url} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. 10.10.10.10 or ldap.example.com" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Port</label><input type="number" name="port" value={config.port} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Protocol</label>
-                        <select name="protocol" value={config.protocol} onChange={handleChange} className="w-full border p-2 rounded">
-                            <option value="LDAP">LDAP</option>
-                            <option value="LDAPS">LDAPS</option>
-                        </select>
-                    </div>
-                    <div className="flex items-center mt-6">
-                        <label className="flex items-center gap-2 font-bold text-sm text-slate-700">
-                            <input type="checkbox" name="use_tls" checked={config.use_tls} onChange={handleChange} className="w-4 h-4 rounded" /> Enable SSL/TLS
-                        </label>
-                    </div>
-                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">Base DN</label><input type="text" name="base_dn" value={config.base_dn} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. DC=example,DC=local" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Bind Username (DN)</label><input type="text" name="bind_username" value={config.bind_username} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=admin,OU=Service Accounts,DC=..." /></div>
-                    <div><label className="block text-xs font-bold mb-1">Bind Password</label><input type="password" name="bind_password" value={config.bind_password} onChange={handleChange} className="w-full border p-2 rounded" placeholder={config.bind_password === "********" ? "******** (Configured)" : "Enter new password to change"} /></div>
-                    <div><label className="block text-xs font-bold mb-1">Connection Timeout (seconds)</label><input type="number" name="timeout" value={config.timeout} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                </div>
-                <div className="mt-4">
-                    <button type="button" onClick={handleTest} disabled={testing} className="bg-slate-800 text-white px-4 py-2 rounded font-bold hover:bg-slate-700 disabled:opacity-50 transition-colors">
-                        {testing ? "Testing..." : "Test Connection"}
-                    </button>
-                </div>
-            </div>
-
-            {/* User Mapping */}
-            <div>
-                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">User Mapping & Search</h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">User Search Base DN (Optional)</label><input type="text" name="user_search_base" value={config.user_search_base} onChange={handleChange} className="w-full border p-2 rounded" placeholder="Leave empty to use global Base DN" /></div>
-                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">User Search Filter</label><input type="text" name="user_search_filter" value={config.user_search_filter} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. (objectClass=person)" /></div>
-                    
-                    <div><label className="block text-xs font-bold mb-1">Username Attribute</label><input type="text" name="attr_username" value={config.attr_username} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Employee Number Attribute</label><input type="text" name="attr_employee_no" value={config.attr_employee_no} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Display Name Attribute</label><input type="text" name="attr_display_name" value={config.attr_display_name} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Email Attribute</label><input type="text" name="attr_email" value={config.attr_email} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Manager Attribute</label><input type="text" name="attr_manager" value={config.attr_manager} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                    <div><label className="block text-xs font-bold mb-1">Department/Team Attribute</label><input type="text" name="attr_department" value={config.attr_department} onChange={handleChange} className="w-full border p-2 rounded" /></div>
-                </div>
-            </div>
-
-            {/* Group Mapping */}
-            <div>
-                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">Group & Role Mapping</h3>
-                <div className="grid grid-cols-1 gap-4">
-                    <div><label className="block text-xs font-bold mb-1">System Admin Group DN</label><input type="text" name="group_sysadmin" value={config.group_sysadmin} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Admins,OU=Groups,DC=..." /></div>
-                    <div><label className="block text-xs font-bold mb-1">Manager / Team Head Group DN</label><input type="text" name="group_manager" value={config.group_manager} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Managers,OU=Groups,DC=..." /></div>
-                    <div><label className="block text-xs font-bold mb-1">Employee Group DN</label><input type="text" name="group_employee" value={config.group_employee} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Employees,OU=Groups,DC=..." /></div>
-                </div>
-            </div>
-
-            <div className="pt-4 border-t">
-                <button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors w-full">Save Configuration</button>
-            </div>
-        </form>
-    </div>
-  );
-}
-
-function AdminDashboard({ user }) {
-  const [rechartsLoaded, setRechartsLoaded] = useState(!!window.Recharts);
-  
-  useEffect(() => {
-      if (window.Recharts) return;
-      const interval = setInterval(() => {
-          if (window.Recharts) {
-              setRechartsLoaded(true);
-              clearInterval(interval);
-          }
-      }, 200);
-      return () => clearInterval(interval);
-  }, []);
-
-  const Recharts = window.Recharts || {};
-  const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } = Recharts;
-
-  const [overtime, setOvertime] = useState([]);
-  const [wfh, setWfh] = useState([]);
-  const [dateFilter, setDateFilter] = useState("This Month");
-
-  const [teams, setTeams] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [adminTab, setAdminTab] = useState(user.role === 'manager' ? 'team' : 'global');
-  const [selectedTeam, setSelectedTeam] = useState(user.team_id || 1);
-
-  const fetchData = async () => {
-      const [wfhRes, otRes, teamRes, userRes] = await Promise.all([
-          fetch(`/api/wfh?requester=${user.employee_no}`),
-          fetch(`/api/overtime?requester=${user.employee_no}`),
-          fetch(`/api/teams?requester=${user.employee_no}`),
-          fetch(`/api/users?requester=${user.employee_no}`)
-      ]);
-      setWfh(await wfhRes.json());
-      setOvertime(await otRes.json());
-      setTeams(await teamRes.json());
-      setUsers(await userRes.json());
-  };
-  useEffect(() => { fetchData(); }, []);
-
-  const handleAction = async (type, id, newStatus) => {
-    let comment = "";
-    if (newStatus === "Rejected" || newStatus === "Returned") {
-        comment = prompt(`Please enter a reason for marking this as ${newStatus}:`);
-        if (comment === null) return; 
-    }
-    const endpoint = type === 'wfh' ? `/api/wfh/${id}?requester=${user.employee_no}` : `/api/overtime/${id}?requester=${user.employee_no}`;
-    await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: newStatus, manager_comment: comment, approved_by: user.name }) });
-    fetchData();
-  };
-
-  // FILTERING LOGIC
-  const filterByDateRange = (dateStr) => {
-      if (!dateStr) return false;
-      const d = new Date(dateStr);
-      const now = new Date();
-      if (dateFilter === "Today") return d.toDateString() === now.toDateString();
-      if (dateFilter === "This Week") {
-          const mon = getSunday(now);
-          return d >= mon && d <= addDays(mon, 6);
-      }
-      if (dateFilter === "This Month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-      if (dateFilter === "Last Month") return d.getMonth() === (now.getMonth() - 1 + 12) % 12 && d.getFullYear() === (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
-      if (dateFilter === "This Year") return d.getFullYear() === now.getFullYear();
-      return true; // All Time
-  };
-
-  const isWfhInDateRange = (r) => {
-      if (r.selected_dates) {
-          try {
-              const dates = JSON.parse(r.selected_dates);
-              return dates.some(d => filterByDateRange(d));
-          } catch(e) { return false; }
-      }
-      
-      if (r.date) {
-          let cur = new Date(r.date);
-          let end = r.end_date ? new Date(r.end_date) : cur;
-          while (cur <= end) {
-              if (filterByDateRange(cur.toISOString())) return true;
-              cur.setDate(cur.getDate() + 1);
-          }
-      }
-      return false;
-  };
-  const filteredWfh = wfh.filter(isWfhInDateRange);
-  const filteredOt = overtime.filter(r => filterByDateRange(r.created_at || r.start_datetime));
-
-  // Flatten WFH days for accurate date-range analytics
-  const flattenedWfhDays = [];
-  filteredWfh.forEach(r => {
-      if (r.selected_dates) {
-          try {
-              JSON.parse(r.selected_dates).forEach(d => {
-                  if (filterByDateRange(d)) flattenedWfhDays.push({ ...r, exact_date: d });
-              });
-          } catch(e) {}
-      } else if (r.date) {
-          let cur = new Date(r.date);
-          let end = r.end_date ? new Date(r.end_date) : cur;
-          while (cur <= end) {
-              const dStr = cur.toISOString();
-              if (filterByDateRange(dStr)) flattenedWfhDays.push({ ...r, exact_date: dStr });
-              cur.setDate(cur.getDate() + 1);
-          }
-      }
-  });
-
-  const getWFHDaysCount = (r) => r.selected_dates ? JSON.parse(r.selected_dates).length : (r.end_date && r.end_date !== r.date ? 2 : 1);
-  const totalWFHDays = flattenedWfhDays.length;
-  const approvedWfh = filteredWfh.filter(r => r.status === 'Approved').length;
-  
-  const totalOTHours = filteredOt.reduce((acc, r) => acc + (r.duration_hours || 0), 0);
-  const approvedOt = filteredOt.filter(r => r.status === 'Approved').length;
-  
-  // Overnight OT calculation
-  const overnightOt = filteredOt.filter(r => {
-      const s = new Date(r.start_datetime).toDateString();
-      const e = new Date(r.end_datetime).toDateString();
-      return s !== e;
-  }).reduce((acc, r) => acc + (r.duration_hours || 0), 0);
-
-  const uniqueEmpWfh = new Set(filteredWfh.map(r => r.employee_no)).size;
-  const uniqueEmpOt = new Set(filteredOt.map(r => r.employee_no)).size;
-
-  // WFH Days by Weekday (Chart 1)
-  const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu"];
-  const wfhByDayObj = {};
-  flattenedWfhDays.forEach(r => {
-      const day = new Date(r.exact_date).toLocaleDateString('en-US', {weekday: 'short'});
-      wfhByDayObj[day] = (wfhByDayObj[day] || 0) + 1;
-  });
-  const wfhByDayChart = daysOfWeek.map(k => ({ name: k, days: wfhByDayObj[k] || 0 }));
-
-  // Top WFH Employees
-  const wfhEmpMap = {};
-  flattenedWfhDays.forEach(r => {
-      const name = r.name || "Unknown";
-      wfhEmpMap[name] = (wfhEmpMap[name] || 0) + 1;
-  });
-  const wfhEmpChart = Object.keys(wfhEmpMap).map(k => ({ name: k, days: wfhEmpMap[k] })).sort((a,b) => b.days - a.days).slice(0, 5);
-
-  // OT Status
-  const otStatusMap = { 'Pending Approval': 0, 'Approved': 0, 'Rejected': 0, 'Cancelled': 0 };
-  filteredOt.forEach(r => otStatusMap[r.status] = (otStatusMap[r.status] || 0) + 1);
-  const otStatusPie = [
-      { name: 'Approved', value: otStatusMap['Approved'], color: '#22c55e' },
-      { name: 'Pending', value: otStatusMap['Pending Approval'], color: '#eab308' },
-      { name: 'Rejected', value: otStatusMap['Rejected'] + otStatusMap['Cancelled'], color: '#ef4444' }
-  ].filter(d => d.value > 0);
-
-
-  // Department Aggregation
-  const deptMap = {};
-  [...filteredWfh, ...filteredOt].forEach(r => {
-      const d = r.department || "Unassigned";
-      if(!deptMap[d]) deptMap[d] = { dept: d, wfh_req:0, wfh_days:0, ot_req:0, ot_hours:0, emps: new Set() };
-      deptMap[d].emps.add(r.employee_no);
-  });
-  flattenedWfhDays.forEach(r => {
-      const d = r.department || "Unassigned";
-      deptMap[d].wfh_days++;
-  });
-  filteredWfh.forEach(r => {
-      const d = r.department || "Unassigned";
-      deptMap[d].wfh_req++;
-  });
-  filteredOt.forEach(r => {
-      const d = r.department || "Unassigned";
-      deptMap[d].ot_req++;
-      deptMap[d].ot_hours += (r.duration_hours || 0);
-  });
-  const deptList = Object.values(deptMap).map(d => ({...d, emps: d.emps.size}));
-
-  // Top OT Employees
-  const empOtMap = {};
-  filteredOt.forEach(r => {
-      if(!empOtMap[r.employee_no]) empOtMap[r.employee_no] = { emp: r.name, id: r.employee_no, dept: r.department, req:0, hrs:0 };
-      empOtMap[r.employee_no].req++;
-      empOtMap[r.employee_no].hrs += (r.duration_hours || 0);
-  });
-  const topEmployees = Object.values(empOtMap).sort((a,b)=>b.hrs - a.hrs).slice(0, 5);
-
-  const pendingWfh = filteredWfh.filter(r => r.status === 'Pending Approval');
-  const pendingOt = filteredOt.filter(r => r.status === 'Pending Approval');
-
-  // WFH Status Chart
-  const statusPie = [
-      { name: 'Approved', value: approvedWfh, color: '#22c55e' },
-      { name: 'Pending', value: pendingWfh.length, color: '#eab308' },
-      { name: 'Rejected', value: filteredWfh.filter(r => r.status === 'Rejected').length, color: '#ef4444' }
-  ].filter(x => x.value > 0);
-
-  return (
-    <div className="p-6 bg-slate-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">{user.role === 'manager' ? "My Team Dashboard" : "HR Analytics Dashboard"}</h2>
-        <div className="flex gap-4 items-center">
-            <select className="border p-2 rounded-lg font-medium shadow-sm bg-white" value={dateFilter} onChange={e=>setDateFilter(e.target.value)}>
-                <option>Today</option>
-                <option>This Week</option>
-                <option>This Month</option>
-                <option>Last Month</option>
-                <option>This Year</option>
-                <option>All Time</option>
-            </select>
-            <div className="flex gap-2">
-                <a href="/api/export/wfh" className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-sm flex items-center gap-2">⬇️ WFH Report</a>
-                <a href="/api/export/overtime" className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-sm flex items-center gap-2">⬇️ OT Report</a>
-            </div>
-        </div>
-      </div>
-
-      {user.role === 'system_admin' && (
-      <div className="flex gap-4 mb-6">
-          <button onClick={() => setAdminTab('global')} className={`px-4 py-2 font-bold rounded-lg ${adminTab === 'global' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}`}>Global Analytics</button>
-          <button onClick={() => setAdminTab('team')} className={`px-4 py-2 font-bold rounded-lg ${adminTab === 'team' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}`}>My Team Overview</button>
-
-      </div>
-      )}
-      
-      {adminTab === 'global' && (
-        <>
-
-
-      {filteredWfh.length === 0 && filteredOt.length === 0 && (
-          <div className="bg-white p-6 rounded-xl border border-dashed border-slate-300 text-center text-slate-500 mb-6 font-medium">
-              No data available for the selected period.
-          </div>
-      )}
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-blue-500">
-              <div className="text-xs font-bold text-slate-400 uppercase">WFH Requests</div>
-              <div className="text-3xl font-bold mt-1 text-slate-800">{filteredWfh.length}</div>
-              <div className="text-xs font-medium text-slate-500 mt-1">{totalWFHDays} Total WFH Days</div>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-purple-500">
-              <div className="text-xs font-bold text-slate-400 uppercase">OT Requests</div>
-              <div className="text-3xl font-bold mt-1 text-slate-800">{filteredOt.length}</div>
-              <div className="text-xs font-medium text-slate-500 mt-1">{totalOTHours.toFixed(1)} Total OT Hours</div>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-indigo-500">
-              <div className="text-xs font-bold text-slate-400 uppercase">Overnight OT</div>
-              <div className="text-3xl font-bold mt-1 text-slate-800">{overnightOt.toFixed(1)} <span className="text-sm font-normal">hrs</span></div>
-              <div className="text-xs font-medium text-slate-500 mt-1">Crossing Midnight</div>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-emerald-500">
-              <div className="text-xs font-bold text-slate-400 uppercase">Active Employees</div>
-              <div className="text-3xl font-bold mt-1 text-slate-800">{Math.max(uniqueEmpWfh, uniqueEmpOt)}</div>
-              <div className="text-xs font-medium text-slate-500 mt-1">Submitting requests</div>
-          </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {/* Charts */}
-          <div className="col-span-1 md:col-span-2 bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-              <h3 className="font-bold text-slate-700 mb-4">WFH Days by Weekday</h3>
-              <div className="h-64">
-                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
-                 wfhByDayChart.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={wfhByDayChart}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                          <Tooltip cursor={{fill: '#f8fafc'}} />
-                          <Bar dataKey="days" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
-                      </BarChart>
-                  </ResponsiveContainer>
-                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
-              </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-              <h3 className="font-bold text-slate-700 mb-4">WFH Status</h3>
-              <div className="h-64">
-                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
-                 statusPie.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                          <Pie data={statusPie} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                              {statusPie.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                          </Pie>
-                          <Tooltip />
-                          <Legend verticalAlign="bottom" height={36}/>
-                      </PieChart>
-                  </ResponsiveContainer>
-                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
-              </div>
-          </div>
-          
-          <div className="col-span-1 md:col-span-3 bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-              <h3 className="font-bold text-slate-700 mb-4">Overtime Hours by Department</h3>
-              <div className="h-64">
-                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
-                 deptList.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={deptList}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="dept" axisLine={false} tickLine={false} />
-                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                          <Tooltip cursor={{fill: '#f8fafc'}} />
-                          <Bar dataKey="ot_hours" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={50} />
-                      </BarChart>
-                  </ResponsiveContainer>
-                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
-              </div>
-          </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-6 mb-8">
-          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
-              <h3 className="font-bold text-slate-700 mb-4">Top Overtime Employees</h3>
-              {topEmployees.length > 0 ? (
-              <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500 uppercase text-xs"><tr><th className="p-2 rounded-l-lg">Employee</th><th className="p-2">Dept</th><th className="p-2">Reqs</th><th className="p-2 rounded-r-lg">Total Hours</th></tr></thead>
-                  <tbody className="divide-y">{topEmployees.map(e => (
-                      <tr key={e.id}><td className="p-2 font-bold">{e.emp}</td><td className="p-2">{e.dept || "-"}</td><td className="p-2">{e.req}</td><td className="p-2 font-bold text-blue-600">{e.hrs.toFixed(2)}</td></tr>
-                  ))}</tbody>
-              </table>) : <div className="text-slate-400">No data</div>}
-          </div>
-
-          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
-              <h3 className="font-bold text-slate-700 mb-4">Department Summary</h3>
-              {deptList.length > 0 ? (
-              <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500 uppercase text-xs"><tr><th className="p-2 rounded-l-lg">Dept</th><th className="p-2">WFH Days</th><th className="p-2 rounded-r-lg">OT Hrs</th></tr></thead>
-                  <tbody className="divide-y">{deptList.map(d => (
-                      <tr key={d.dept}><td className="p-2 font-bold">{d.dept}</td><td className="p-2">{d.wfh_days}</td><td className="p-2 font-bold text-blue-600">{d.ot_hours.toFixed(2)}</td></tr>
-                  ))}</tbody>
-              </table>) : <div className="text-slate-400">No data</div>}
-          </div>
-      </div>
-      
-      {/* Pending Approvals */}
-      <h3 className="font-bold text-lg mb-2 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingWfh.length}</span> Pending WFH Approvals</h3>
-      {pendingWfh.length === 0 ? <div className="p-4 bg-white text-slate-500 rounded-lg mb-8 shadow-sm">No pending WFH requests in this period.</div> : (
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm border rounded-xl overflow-hidden mb-8 shadow-sm"><thead className="bg-slate-50 border-b"><tr><th className="p-3">Emp</th><th className="p-3">Dates</th><th className="p-3">Type</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
-        <tbody className="divide-y bg-white">{pendingWfh.map(r => (
-          <tr key={r.id}>
-              <td className="p-3 font-bold text-slate-700">{r.name}</td>
-              <td className="p-3">
-                  {r.selected_dates ? JSON.parse(r.selected_dates).map(d=>formatDateOnly(d)).join(", ") : formatDateOnly(r.date)}
-              </td>
-              <td className="p-3">{r.wfh_type}</td>
-              <td className="p-3"><StatusBadge status={r.status}/></td>
-              <td className="p-3 flex gap-2">
-                <button onClick={()=>handleAction('wfh', r.id, 'Approved')} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-green-200">Approve</button>
-                <button onClick={()=>handleAction('wfh', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
-                <button onClick={()=>handleAction('wfh', r.id, 'Returned')} className="bg-orange-100 text-orange-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-orange-200">Return</button>
-              </td>
-          </tr>
-        ))}</tbody>
-      </table></div>
-      )}
-
-      <h3 className="font-bold text-lg mb-2 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingOt.length}</span> Pending Overtime Approvals</h3>
-      {pendingOt.length === 0 ? <div className="p-4 bg-white text-slate-500 rounded-lg mb-8 shadow-sm">No pending OT requests in this period.</div> : (
-      <div className="overflow-x-auto"><table className="w-full text-left text-sm border rounded-xl overflow-hidden shadow-sm"><thead className="bg-slate-50 border-b"><tr><th className="p-3">Emp</th><th className="p-3">Start/End</th><th className="p-3">Hrs</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
-        <tbody className="divide-y bg-white">{pendingOt.map(r => (
-          <tr key={r.id}><td className="p-3 font-bold text-slate-700">{r.name}</td><td className="p-3 text-xs leading-relaxed">{formatDateTime(r.start_datetime)} <br/> {formatDateTime(r.end_datetime)}</td><td className="p-3 font-bold text-blue-700">{r.duration_hours.toFixed(2)}</td><td className="p-3"><StatusBadge status={r.status}/></td>
-          <td className="p-3 flex gap-2">
-            <button onClick={()=>handleAction('ot', r.id, 'Approved')} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-green-200">Approve</button>
-            <button onClick={()=>handleAction('ot', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
-          </td></tr>
-        ))}</tbody>
-      </table></div>
-      )}
-
-        </>
-      )}
-
-
-
-      {adminTab === 'team' && (
-          <TeamOverview 
-              wfh={filteredWfh} 
-              overtime={filteredOt} 
-              teams={teams} 
-              users={users} 
-              selectedTeam={selectedTeam} 
-              setSelectedTeam={setSelectedTeam} 
-              dateFilter={dateFilter}
-              formatDateOnly={formatDateOnly}
-              getWFHDaysCount={getWFHDaysCount}
-              user={user}
-              handleAction={handleAction}
-          />
-      )}
-    </div>
-  );
 }
 
 function AdminSettings() {

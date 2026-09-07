@@ -69,22 +69,11 @@ def authenticate_user(username: str, password: str, config) -> dict:
         mgr_list = get_attr_case_insensitive(attrs, config.attr_manager)
         manager_dn = mgr_list[0] if mgr_list else None
         
-        # 2. Search for groups
+        # Groups and role mapping via LDAP has been removed as AD manager relation is the sole source of truth.
         group_dns = []
-        # Try to read directly from user attributes (Active Directory memberOf style)
-        direct_groups = get_attr_case_insensitive(attrs, config.group_membership_attr)
-        if direct_groups:
-            group_dns.extend([str(g) for g in direct_groups])
-            
-        # If the configuration provided a group search base, also do a traditional group search
-        if config.group_search_base and config.group_membership_attr:
-            group_filter = f"({config.group_membership_attr}={user_dn})"
-            admin_conn.search(config.group_search_base, group_filter, SUBTREE, attributes=['*'])
-            for entry in admin_conn.entries:
-                if entry.entry_dn not in group_dns:
-                    group_dns.append(entry.entry_dn)
-                
+        
         # 2.5 Resolve manager
+        
         manager_name = None
         if manager_dn:
             admin_conn.search(config.base_dn, f"(distinguishedName={manager_dn})", SUBTREE, attributes=['*'])

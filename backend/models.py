@@ -12,6 +12,7 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     employee_no = Column(String, unique=True, index=True)
+    user_dn = Column(String, unique=True, nullable=True)
     name = Column(String)
     password = Column(String) # Storing plain text just for this temporary local dev
     is_admin = Column(Boolean, default=False)

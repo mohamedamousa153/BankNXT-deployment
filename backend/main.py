@@ -126,12 +126,34 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
         elif config.group_employee and config.group_employee in ldap_groups:
             resolved_role = "employee"
             
-        # Resolve Team
+        # Resolve Team dynamically from LDAP groups
         resolved_team_id = None
-        for team in db.query(models.Team).all():
-            if team.ldap_group_id and team.ldap_group_id in ldap_groups:
-                resolved_team_id = team.id
-                break
+        role_groups = [config.group_sysadmin, config.group_manager, config.group_employee]
+        
+        for group_dn in ldap_groups:
+            if group_dn not in role_groups:
+                # Extract CN for friendly team name
+                # e.g. CN=DevOps & SRE,CN=Users... -> DevOps & SRE
+                cn_part = group_dn.split(",")[0]
+                if cn_part.upper().startswith("CN="):
+                    team_name = cn_part[3:]
+                    # Get or auto-create the Team
+                    team = db.query(models.Team).filter(models.Team.ldap_group_id == group_dn).first()
+                    if not team:
+                        team = models.Team(name=team_name, ldap_group_id=group_dn)
+                        db.add(team)
+                        db.commit()
+                        db.refresh(team)
+                    resolved_team_id = team.id
+                    break # Assign the first non-role group as their primary team
+                    
+        print(f"LDAP USER: {creds.employee_no}")
+        print(f"USER DN: {auth_result.get('user_dn')}")
+        print(f"LDAP GROUPS FOUND: {ldap_groups}")
+        print(f"MANAGER DN: {auth_result.get('manager_dn')}")
+        print(f"MANAGER NAME: {auth_result.get('manager_name')}")
+        print(f"RESOLVED TEAM: {resolved_team_id}")
+        print(f"RESOLVED PERMISSIONS: {resolved_role}")
 
         # Sync LDAP Identity to local DB for foreign keys
         user = db.query(models.User).filter(models.User.employee_no == auth_result["employee_no"]).first()

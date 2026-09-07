@@ -115,8 +115,21 @@ def get_allowed_employee_nos(db, current_user):
         return None
     allowed = [current_user.employee_no]
     if current_user.user_dn:
-        subs = get_subordinate_user_employee_nos(db, current_user.user_dn)
-        allowed.extend(subs)
+        config = db.query(models.LDAPSettings).first()
+        if config and config.enabled:
+            # Source of truth: AD directly
+            print(f"DEBUG: Resolving hierarchy from AD for USER DN: {current_user.user_dn}")
+            ad_subs = ldap_service.get_ad_subordinates_recursive(current_user.user_dn, config, db)
+            print(f"DEBUG: RECURSIVE SUBORDINATES FOUND: {len(ad_subs)}")
+            allowed.extend(ad_subs)
+        else:
+            # Fallback if AD disabled
+            subs = get_subordinate_user_employee_nos(db, current_user.user_dn)
+            allowed.extend(subs)
+            
+    # Ensure uniqueness
+    allowed = list(set(allowed))
+    print(f"DEBUG: ALLOWED EMPLOYEE NUMBERS: {allowed}")
     return allowed
 
 # --- AUTH ENDPOINTS ---

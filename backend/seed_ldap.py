@@ -1,9 +1,10 @@
 import sqlite3
+import os
 
-conn = sqlite3.connect('backend/dashboard.db')
+DB_PATH = os.getenv("DB_PATH", "/app/backend/data/dashboard.db")
+conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
 
-# Insert the provided LDAP configuration
 c.execute("""
 INSERT INTO ldap_settings (
     id, enabled, server_url, port, protocol, use_tls, base_dn, bind_username, bind_password, timeout,
@@ -16,10 +17,8 @@ INSERT INTO ldap_settings (
 )
 """)
 
-# Insert a sample team mapped to DevOps & SRE
-c.execute("""
-INSERT INTO teams (id, name, ldap_group_id) VALUES (3, 'DevOps', 'CN=DevOps & SRE,CN=Users,DC=AIBEgypt,DC=local')
-""")
+c.execute("INSERT INTO teams (id, name, ldap_group_id) VALUES (3, 'DevOps', 'CN=DevOps & SRE,CN=Users,DC=AIBEgypt,DC=local')")
+c.execute("UPDATE users SET role='system_admin' WHERE employee_no='admin'")
 
 conn.commit()
 conn.close()

@@ -20,6 +20,15 @@ def test_ldap_connection(server_url: str, port: int, timeout: int = 5, bind_dn: 
     except Exception as e:
         return {"success": False, "message": f"Connection failed: {str(e)}"}
 
+def get_attr_case_insensitive(attrs: dict, attr_name: str):
+    if not attr_name:
+        return []
+    attr_name_lower = attr_name.lower()
+    for k, v in attrs.items():
+        if k.lower() == attr_name_lower:
+            return v if isinstance(v, list) else [v]
+    return []
+
 def authenticate_user(username: str, password: str, config) -> dict:
     try:
         host = config.server_url
@@ -37,7 +46,8 @@ def authenticate_user(username: str, password: str, config) -> dict:
         if "{username}" in filter_str:
             filter_str = filter_str.replace("{username}", username)
             
-        admin_conn.search(search_base, filter_str, SUBTREE, attributes=['*'])
+        # We explicitly request memberOf in case it's not included in '*' by default on some servers
+        admin_conn.search(search_base, filter_str, SUBTREE, attributes=['*', 'memberOf', config.group_membership_attr])
         
         if not admin_conn.entries:
             admin_conn.unbind()
@@ -46,18 +56,33 @@ def authenticate_user(username: str, password: str, config) -> dict:
         user_entry = admin_conn.entries[0]
         user_dn = user_entry.entry_dn
         
+        # Get raw dict attributes
         attrs = user_entry.entry_attributes_as_dict
-        employee_no = attrs.get(config.attr_employee_no, [username])[0]
-        display_name = attrs.get(config.attr_display_name, [username])[0]
-        manager_dn = attrs.get(config.attr_manager, [None])[0]
+        
+        # Safe extraction
+        emp_list = get_attr_case_insensitive(attrs, config.attr_employee_no)
+        employee_no = emp_list[0] if emp_list and str(emp_list[0]).strip() else username
+        
+        disp_list = get_attr_case_insensitive(attrs, config.attr_display_name)
+        display_name = disp_list[0] if disp_list and str(disp_list[0]).strip() else username
+        
+        mgr_list = get_attr_case_insensitive(attrs, config.attr_manager)
+        manager_dn = mgr_list[0] if mgr_list else None
         
         # 2. Search for groups
         group_dns = []
+        # Try to read directly from user attributes (Active Directory memberOf style)
+        direct_groups = get_attr_case_insensitive(attrs, config.group_membership_attr)
+        if direct_groups:
+            group_dns.extend([str(g) for g in direct_groups])
+            
+        # If the configuration provided a group search base, also do a traditional group search
         if config.group_search_base and config.group_membership_attr:
             group_filter = f"({config.group_membership_attr}={user_dn})"
             admin_conn.search(config.group_search_base, group_filter, SUBTREE, attributes=['*'])
             for entry in admin_conn.entries:
-                group_dns.append(entry.entry_dn)
+                if entry.entry_dn not in group_dns:
+                    group_dns.append(entry.entry_dn)
                 
         # 2.5 Resolve manager
         manager_name = None
@@ -66,7 +91,8 @@ def authenticate_user(username: str, password: str, config) -> dict:
             if admin_conn.entries:
                 mgr_entry = admin_conn.entries[0]
                 mgr_attrs = mgr_entry.entry_attributes_as_dict
-                manager_name = mgr_attrs.get(config.attr_display_name, [manager_dn])[0]
+                mgr_disp_list = get_attr_case_insensitive(mgr_attrs, config.attr_display_name)
+                manager_name = mgr_disp_list[0] if mgr_disp_list else manager_dn
                 
         admin_conn.unbind()
         

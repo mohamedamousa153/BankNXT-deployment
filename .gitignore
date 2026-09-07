@@ -1,0 +1,10 @@
+.env
+.env.*
+backend/dashboard.db
+backend/*.db
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+frontend/node_modules/

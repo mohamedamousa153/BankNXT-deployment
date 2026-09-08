@@ -168,7 +168,12 @@ def get_ad_subordinates_recursive(manager_dn: str, config, db_session) -> list:
                 # or we just rely on AD DN. We'll set manager_name = None for now, as UI mostly needs manager DN.
                 
                 # Sync to SQLite safely
-                user_record = db_session.query(User).filter(User.employee_no == emp_no).first()
+                # Search by user_dn first since employee_no could have different casing
+                from sqlalchemy import func
+                user_record = db_session.query(User).filter(User.user_dn == str(user_dn)).first()
+                if not user_record:
+                    user_record = db_session.query(User).filter(func.lower(User.employee_no) == func.lower(emp_no)).first()
+                
                 if not user_record:
                     user_record = User(
                         employee_no=emp_no,
@@ -184,6 +189,8 @@ def get_ad_subordinates_recursive(manager_dn: str, config, db_session) -> list:
                     user_record.name = str(name)
                     user_record.user_dn = str(user_dn)
                     user_record.manager_dn = str(mgr_dn) if mgr_dn else None
+                    # We do not override employee_no to avoid breaking existing relations
+                    emp_no = user_record.employee_no  # use the DB's casing
                     
                 if emp_no not in allowed_employees:
                     allowed_employees.append(emp_no)

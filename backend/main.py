@@ -159,10 +159,15 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
             raise HTTPException(status_code=401, detail=auth_result["message"])
             
                 # Note: Role is stripped down. Everyone is an employee unless they are admin.
-        # Manager hierarchy is driven by AD. We keep role='employee'.
+        # Manager hierarchy is driven by AD. We check if they have reports.
         resolved_role = "employee"
-        if creds.employee_no == "admin":
+        if creds.employee_no == "admin" or creds.employee_no == "sysadmin":
             resolved_role = "system_admin"
+        elif auth_result.get("user_dn"):
+            # Check if this user has any subordinates in AD
+            subs = ldap_service.get_ad_subordinates_recursive(db, auth_result.get("user_dn"), config)
+            if subs and len(subs) > 0:
+                resolved_role = "manager"
         
         # Determine top-level log prints
         print(f"LDAP USER: {creds.employee_no}")
@@ -172,7 +177,13 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
 
         # Sync LDAP Identity to local DB for foreign keys
         
-        user = db.query(models.User).filter(models.User.employee_no == auth_result["employee_no"]).first()
+        from sqlalchemy import func
+        user = None
+        if auth_result.get('user_dn'):
+            user = db.query(models.User).filter(models.User.user_dn == auth_result['user_dn']).first()
+        if not user:
+            user = db.query(models.User).filter(func.lower(models.User.employee_no) == func.lower(auth_result["employee_no"])).first()
+            
         if not user:
             user = models.User(
                 employee_no=auth_result["employee_no"],
@@ -192,6 +203,8 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
             user.manager_dn = auth_result.get("manager_dn")
             user.manager_name = auth_result.get("manager_name")
             user.user_dn = auth_result.get('user_dn')
+            # Important: sync the auth_result to use the existing DB case so session tokens match!
+            auth_result["employee_no"] = user.employee_no
         import secrets
         user.session_token = secrets.token_hex(32)
         db.commit()

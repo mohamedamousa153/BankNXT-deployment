@@ -1,4 +1,38 @@
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+  componentDidCatch(error, errorInfo) {
+    this.setState({ hasError: true, error: error, errorInfo: errorInfo });
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '20px', background: '#fee', color: '#900', border: '1px solid #c00', margin: '20px', borderRadius: '8px', fontFamily: 'monospace' }}>
+          <h2>Something went wrong.</h2>
+          <p><b>{this.state.error && this.state.error.toString()}</b></p>
+          <pre style={{ whiteSpace: 'pre-wrap', fontSize: '12px' }}>
+            {this.state.errorInfo && this.state.errorInfo.componentStack}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function safeJSONParse(str, fallback = []) {
+    if (!str) return fallback;
+    try {
+        return JSON.parse(str);
+    } catch(e) {
+        return fallback;
+    }
+}
+
 // Intercept fetch to automatically attach Authorization header
 const originalFetch = window.fetch;
 window.fetch = async (...args) => {
@@ -83,11 +117,17 @@ function App() {
   const [activeTab, setActiveTab] = useState("overtime");
   
   useEffect(() => {
-    const savedUser = localStorage.getItem("banknxt_user");
-    if (savedUser) {
-      const u = JSON.parse(savedUser);
-      setUser(u);
-      setActiveTab(u.is_admin ? "admin-dashboard" : "overtime");
+    try {
+        const savedUser = localStorage.getItem("banknxt_user");
+        if (savedUser && savedUser !== "undefined" && savedUser !== "null") {
+          const u = JSON.parse(savedUser);
+          if (u && typeof u === 'object') {
+              setUser(u);
+              setActiveTab(u.is_admin ? "admin-dashboard" : "overtime");
+          }
+        }
+    } catch(e) {
+        localStorage.removeItem("banknxt_user");
     }
   }, []);
 
@@ -254,7 +294,7 @@ function Overtime({ user }) {
             <tr key={r.id}>
                 <td className="p-3">{formatDateTime(r.start_datetime)}</td>
                 <td className="p-3">{formatDateTime(r.end_datetime)}</td>
-                <td className="p-3 font-bold text-blue-700">{r.duration_hours.toFixed(2)}h</td>
+                <td className="p-3 font-bold text-blue-700">{(r.duration_hours || 0).toFixed(2)}h</td>
                 <td className="p-3"><StatusBadge status={r.status}/></td>
                 <td className="p-3 text-xs text-slate-600">
                     {r.approved_by ? <><span className="font-bold text-slate-800">{r.approved_by}</span><br/>{formatDateTime(r.approval_date)}<br/><i className="text-slate-500">{r.manager_comment}</i></> : '-'}
@@ -282,7 +322,7 @@ function WFH({ user }) {
       records.forEach(r => {
           if (r.status === 'Rejected' || r.status === 'Cancelled' || r.status === 'Returned') return;
           if (r.selected_dates) {
-              try { JSON.parse(r.selected_dates).forEach(d => dates.add(d)); } catch(e){}
+              try { safeJSONParse(r.selected_dates, []).forEach(d => dates.add(d)); } catch(e){}
           } else if (r.date) {
               let cur = new Date(r.date);
               let end = r.end_date ? new Date(r.end_date) : cur;
@@ -419,7 +459,7 @@ function WFH({ user }) {
               let datesDisplay = "-";
               if (r.selected_dates) {
                   try {
-                      datesDisplay = JSON.parse(r.selected_dates).map(d => formatDateOnly(d)).join(<br/>);
+                      datesDisplay = safeJSONParse(r.selected_dates, []).map(d => formatDateOnly(d)).join(<br/>);
                   } catch(e){}
               } else {
                   datesDisplay = formatDateOnly(r.date) + (r.end_date && r.end_date !== r.date ? ` ➡️ ${formatDateOnly(r.end_date)}` : '');
@@ -431,7 +471,7 @@ function WFH({ user }) {
                   <td className="p-3 font-bold text-blue-700 bg-blue-50/50">
                       {r.selected_dates ? (
                          <div className="flex flex-col gap-1">
-                             {JSON.parse(r.selected_dates).map(d => <span key={d}>{formatDateOnly(d)}</span>)}
+                             {safeJSONParse(r.selected_dates, []).map(d => <span key={d}>{formatDateOnly(d)}</span>)}
                          </div>
                       ) : (
                           <>{formatDateOnly(r.date)} {r.end_date && r.end_date !== r.date ? ` ➡️ ${formatDateOnly(r.end_date)}` : ''}</>
@@ -474,7 +514,7 @@ function HierarchyOverview({ wfh, overtime, hierarchy, users, viewFilter, setVie
     const wfhToday = teamWfh.filter(r => {
         if (!r.selected_dates) return false;
         try {
-            return JSON.parse(r.selected_dates).includes(formatDateOnly(new Date()));
+            return safeJSONParse(r.selected_dates, []).includes(formatDateOnly(new Date()));
         } catch { return false; }
     });
 
@@ -532,7 +572,7 @@ function HierarchyOverview({ wfh, overtime, hierarchy, users, viewFilter, setVie
                                 <div key={r.id} className="border p-3 rounded-lg flex justify-between items-center">
                                     <div>
                                         <p className="font-bold">{r.name} ({r.employee_no})</p>
-                                        <p className="text-sm text-slate-500">{getWFHDaysCount(r)} Days: {r.selected_dates ? JSON.parse(r.selected_dates).join(', ') : r.date}</p>
+                                        <p className="text-sm text-slate-500">{getWFHDaysCount(r)} Days: {r.selected_dates ? safeJSONParse(r.selected_dates, []).join(', ') : r.date}</p>
                                     </div>
                                     <div className="flex gap-2">
                                         <button onClick={() => handleAction('wfh', r.id, 'Approved')} className="bg-emerald-500 text-white px-3 py-1 rounded text-sm hover:bg-emerald-600 font-bold">Approve</button>
@@ -604,6 +644,571 @@ function HierarchyOverview({ wfh, overtime, hierarchy, users, viewFilter, setVie
     );
 }
 
+function LDAPSettingsPage({ user }) {
+  const [config, setConfig] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/admin/ldap/config')
+    .then(r => r.json())
+    .then(data => {
+        // Ensure defaults if missing
+        setConfig({
+            ...data,
+            server_url: data.server_url || '',
+            base_dn: data.base_dn || '',
+            bind_username: data.bind_username || '',
+            bind_password: data.bind_password || '',
+            user_search_base: data.user_search_base || '',
+            user_search_filter: data.user_search_filter || '',
+            group_search_base: data.group_search_base || '',
+            group_membership_attr: data.group_membership_attr || 'uniqueMember',
+            group_sysadmin: data.group_sysadmin || '',
+            group_manager: data.group_manager || '',
+            group_employee: data.group_employee || ''
+        });
+    });
+  }, [user]);
+
+  const handleChange = (e) => {
+      const { name, value, type, checked } = e.target;
+      setConfig(prev => ({
+          ...prev,
+          [name]: type === 'checkbox' ? checked : value
+      }));
+  };
+
+  const handleSave = async (e) => {
+      e.preventDefault();
+      try {
+          const res = await fetch('/api/admin/ldap/config', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(config)
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Error saving');
+          setConfig(data);
+          setMsg("Configuration saved successfully.");
+          setIsError(false);
+          setTimeout(() => setMsg(""), 3000);
+      } catch (err) {
+          setMsg(err.message);
+          setIsError(true);
+      }
+  };
+
+  const handleTest = async () => {
+      setTesting(true);
+      setMsg("Testing connection...");
+      setIsError(false);
+      try {
+          const res = await fetch('/api/admin/ldap/test-connection', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(config)
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Connection failed');
+          setMsg(`✓ ${data.message}`);
+          setIsError(false);
+      } catch (err) {
+          setMsg(`✗ LDAP connection failed: ${err.message}`);
+          setIsError(true);
+      } finally {
+          setTesting(false);
+      }
+  };
+
+  if (!config) return <div className="p-6">Loading configuration...</div>;
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 max-w-4xl mx-auto">
+        <h2 className="text-2xl font-bold text-slate-800 mb-6">LDAP / Active Directory Configuration</h2>
+        
+        {msg && (
+            <div className={`p-4 rounded-lg mb-6 font-bold ${isError ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                {msg}
+            </div>
+        )}
+        
+        <form onSubmit={handleSave} className="space-y-8">
+            {/* Status */}
+            <div>
+                <label className="flex items-center gap-2 font-bold text-slate-700">
+                    <input type="checkbox" name="enabled" checked={config.enabled} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" />
+                    Enable LDAP Authentication
+                </label>
+                <p className="text-sm text-slate-500 mt-1 ml-7">If disabled, the system will use local authentication.</p>
+            </div>
+
+            {/* Connection */}
+            <div>
+                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">Connection Settings</h3>
+                <div className="grid grid-cols-2 gap-4">
+                    <div><label className="block text-xs font-bold mb-1">LDAP Server Host / IP</label><input type="text" name="server_url" value={config.server_url} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. 10.10.10.10 or ldap.example.com" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Port</label><input type="number" name="port" value={config.port} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Protocol</label>
+                        <select name="protocol" value={config.protocol} onChange={handleChange} className="w-full border p-2 rounded">
+                            <option value="LDAP">LDAP</option>
+                            <option value="LDAPS">LDAPS</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center mt-6">
+                        <label className="flex items-center gap-2 font-bold text-sm text-slate-700">
+                            <input type="checkbox" name="use_tls" checked={config.use_tls} onChange={handleChange} className="w-4 h-4 rounded" /> Enable SSL/TLS
+                        </label>
+                    </div>
+                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">Base DN</label><input type="text" name="base_dn" value={config.base_dn} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. DC=example,DC=local" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Bind Username (DN)</label><input type="text" name="bind_username" value={config.bind_username} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=admin,OU=Service Accounts,DC=..." /></div>
+                    <div><label className="block text-xs font-bold mb-1">Bind Password</label><input type="password" name="bind_password" value={config.bind_password} onChange={handleChange} className="w-full border p-2 rounded" placeholder={config.bind_password === "********" ? "******** (Configured)" : "Enter new password to change"} /></div>
+                    <div><label className="block text-xs font-bold mb-1">Connection Timeout (seconds)</label><input type="number" name="timeout" value={config.timeout} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                </div>
+                <div className="mt-4">
+                    <button type="button" onClick={handleTest} disabled={testing} className="bg-slate-800 text-white px-4 py-2 rounded font-bold hover:bg-slate-700 disabled:opacity-50 transition-colors">
+                        {testing ? "Testing..." : "Test Connection"}
+                    </button>
+                </div>
+            </div>
+
+            {/* User Mapping */}
+            <div>
+                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">User Mapping & Search</h3>
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">User Search Base DN (Optional)</label><input type="text" name="user_search_base" value={config.user_search_base} onChange={handleChange} className="w-full border p-2 rounded" placeholder="Leave empty to use global Base DN" /></div>
+                    <div className="col-span-2"><label className="block text-xs font-bold mb-1">User Search Filter</label><input type="text" name="user_search_filter" value={config.user_search_filter} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. (objectClass=person)" /></div>
+                    
+                    <div><label className="block text-xs font-bold mb-1">Username Attribute</label><input type="text" name="attr_username" value={config.attr_username} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Employee Number Attribute</label><input type="text" name="attr_employee_no" value={config.attr_employee_no} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Display Name Attribute</label><input type="text" name="attr_display_name" value={config.attr_display_name} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Email Attribute</label><input type="text" name="attr_email" value={config.attr_email} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Manager Attribute</label><input type="text" name="attr_manager" value={config.attr_manager} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                    <div><label className="block text-xs font-bold mb-1">Department/Team Attribute</label><input type="text" name="attr_department" value={config.attr_department} onChange={handleChange} className="w-full border p-2 rounded" /></div>
+                </div>
+            </div>
+
+            {/* Group Mapping */}
+            <div>
+                <h3 className="font-bold text-lg border-b pb-2 mb-4 text-slate-800">Group & Role Mapping</h3>
+                <div className="grid grid-cols-1 gap-4">
+                    <div><label className="block text-xs font-bold mb-1">System Admin Group DN</label><input type="text" name="group_sysadmin" value={config.group_sysadmin} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Admins,OU=Groups,DC=..." /></div>
+                    <div><label className="block text-xs font-bold mb-1">Manager / Team Head Group DN</label><input type="text" name="group_manager" value={config.group_manager} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Managers,OU=Groups,DC=..." /></div>
+                    <div><label className="block text-xs font-bold mb-1">Employee Group DN</label><input type="text" name="group_employee" value={config.group_employee} onChange={handleChange} className="w-full border p-2 rounded" placeholder="e.g. CN=HRPortal-Employees,OU=Groups,DC=..." /></div>
+                </div>
+            </div>
+
+            <div className="pt-4 border-t">
+                <button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors w-full">Save Configuration</button>
+            </div>
+        </form>
+    </div>
+  );
+}
+
+function AdminDashboard({ user }) {
+  const [rechartsLoaded, setRechartsLoaded] = useState(!!window.Recharts);
+  
+  useEffect(() => {
+      if (window.Recharts) return;
+      const interval = setInterval(() => {
+          if (window.Recharts) {
+              setRechartsLoaded(true);
+              clearInterval(interval);
+          }
+      }, 200);
+      return () => clearInterval(interval);
+  }, []);
+
+  const Recharts = window.Recharts || {};
+  const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } = Recharts;
+
+  const [overtime, setOvertime] = useState([]);
+  const [wfh, setWfh] = useState([]);
+  const [dateFilter, setDateFilter] = useState("This Month");
+
+  const [hierarchy, setHierarchy] = useState({direct_reports: [], all_subordinates: []});
+  const [viewFilter, setViewFilter] = useState('direct');
+  const [users, setUsers] = useState([]);
+  const [adminTab, setAdminTab] = useState(user.role === 'manager' ? 'hierarchy' : 'global');
+  
+
+  const fetchData = async () => {
+      const [wfhRes, otRes, teamRes, userRes] = await Promise.all([
+          fetch(`/api/wfh?requester=${user.employee_no}`),
+          fetch(`/api/overtime?requester=${user.employee_no}`),
+          fetch(`/api/users/hierarchy`),
+          fetch(`/api/users?requester=${user.employee_no}`)
+      ]);
+      const wData = await wfhRes.json();
+      const oData = await otRes.json();
+      const hData = await teamRes.json();
+      const uData = await userRes.json();
+      
+      setWfh(Array.isArray(wData) ? wData : (wData.items ? wData.items : []));
+      setOvertime(Array.isArray(oData) ? oData : (oData.items ? oData.items : []));
+      setHierarchy(hData && hData.direct_reports ? hData : {direct_reports: [], all_subordinates: []});
+      setUsers(Array.isArray(uData) ? uData : []);
+  };
+  useEffect(() => { fetchData(); }, []);
+
+  const handleAction = async (type, id, newStatus) => {
+    let comment = "";
+    if (newStatus === "Rejected" || newStatus === "Returned") {
+        comment = prompt(`Please enter a reason for marking this as ${newStatus}:`);
+        if (comment === null) return; 
+    }
+    const endpoint = type === 'wfh' ? `/api/wfh/${id}?requester=${user.employee_no}` : `/api/overtime/${id}?requester=${user.employee_no}`;
+    await fetch(endpoint, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: newStatus, manager_comment: comment, approved_by: user.name }) });
+    fetchData();
+  };
+
+  // FILTERING LOGIC
+  const filterByDateRange = (dateStr) => {
+      if (!dateStr) return false;
+      const d = new Date(dateStr);
+      const now = new Date();
+      if (dateFilter === "Today") return d.toDateString() === now.toDateString();
+      if (dateFilter === "This Week") {
+          const mon = getSunday(now);
+          return d >= mon && d <= addDays(mon, 6);
+      }
+      if (dateFilter === "This Month") return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      if (dateFilter === "Last Month") return d.getMonth() === (now.getMonth() - 1 + 12) % 12 && d.getFullYear() === (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
+      if (dateFilter === "This Year") return d.getFullYear() === now.getFullYear();
+      return true; // All Time
+  };
+
+  const isWfhInDateRange = (r) => {
+      if (r.selected_dates) {
+          try {
+              const dates = safeJSONParse(r.selected_dates, []);
+              return dates.some(d => filterByDateRange(d));
+          } catch(e) { return false; }
+      }
+      
+      if (r.date) {
+          let cur = new Date(r.date);
+          let end = r.end_date ? new Date(r.end_date) : cur;
+          while (cur <= end) {
+              if (filterByDateRange(cur.toISOString())) return true;
+              cur.setDate(cur.getDate() + 1);
+          }
+      }
+      return false;
+  };
+  const filteredWfh = wfh.filter(isWfhInDateRange);
+  const filteredOt = overtime.filter(r => filterByDateRange(r.created_at || r.start_datetime));
+
+  // Flatten WFH days for accurate date-range analytics
+  const flattenedWfhDays = [];
+  filteredWfh.forEach(r => {
+      if (r.selected_dates) {
+          try {
+              safeJSONParse(r.selected_dates, []).forEach(d => {
+                  if (filterByDateRange(d)) flattenedWfhDays.push({ ...r, exact_date: d });
+              });
+          } catch(e) {}
+      } else if (r.date) {
+          let cur = new Date(r.date);
+          let end = r.end_date ? new Date(r.end_date) : cur;
+          while (cur <= end) {
+              const dStr = cur.toISOString();
+              if (filterByDateRange(dStr)) flattenedWfhDays.push({ ...r, exact_date: dStr });
+              cur.setDate(cur.getDate() + 1);
+          }
+      }
+  });
+
+  const getWFHDaysCount = (r) => r.selected_dates ? safeJSONParse(r.selected_dates, []).length : (r.end_date && r.end_date !== r.date ? 2 : 1);
+  const totalWFHDays = flattenedWfhDays.length;
+  const approvedWfh = filteredWfh.filter(r => r.status === 'Approved').length;
+  
+  const totalOTHours = filteredOt.reduce((acc, r) => acc + (r.duration_hours || 0), 0);
+  const approvedOt = filteredOt.filter(r => r.status === 'Approved').length;
+  
+  // Overnight OT calculation
+  const overnightOt = filteredOt.filter(r => {
+      const s = new Date(r.start_datetime).toDateString();
+      const e = new Date(r.end_datetime).toDateString();
+      return s !== e;
+  }).reduce((acc, r) => acc + (r.duration_hours || 0), 0);
+
+  const uniqueEmpWfh = new Set(filteredWfh.map(r => r.employee_no)).size;
+  const uniqueEmpOt = new Set(filteredOt.map(r => r.employee_no)).size;
+
+  // WFH Days by Weekday (Chart 1)
+  const daysOfWeek = ["Sun", "Mon", "Tue", "Wed", "Thu"];
+  const wfhByDayObj = {};
+  flattenedWfhDays.forEach(r => {
+      const day = new Date(r.exact_date).toLocaleDateString('en-US', {weekday: 'short'});
+      wfhByDayObj[day] = (wfhByDayObj[day] || 0) + 1;
+  });
+  const wfhByDayChart = daysOfWeek.map(k => ({ name: k, days: wfhByDayObj[k] || 0 }));
+
+  // Top WFH Employees
+  const wfhEmpMap = {};
+  flattenedWfhDays.forEach(r => {
+      const name = r.name || "Unknown";
+      wfhEmpMap[name] = (wfhEmpMap[name] || 0) + 1;
+  });
+  const wfhEmpChart = Object.keys(wfhEmpMap).map(k => ({ name: k, days: wfhEmpMap[k] })).sort((a,b) => b.days - a.days).slice(0, 5);
+
+  // OT Status
+  const otStatusMap = { 'Pending Approval': 0, 'Approved': 0, 'Rejected': 0, 'Cancelled': 0 };
+  filteredOt.forEach(r => otStatusMap[r.status] = (otStatusMap[r.status] || 0) + 1);
+  const otStatusPie = [
+      { name: 'Approved', value: otStatusMap['Approved'], color: '#22c55e' },
+      { name: 'Pending', value: otStatusMap['Pending Approval'], color: '#eab308' },
+      { name: 'Rejected', value: otStatusMap['Rejected'] + otStatusMap['Cancelled'], color: '#ef4444' }
+  ].filter(d => d.value > 0);
+
+
+  // Department Aggregation
+  const deptMap = {};
+  [...filteredWfh, ...filteredOt].forEach(r => {
+      const d = r.department || "Unassigned";
+      if(!deptMap[d]) deptMap[d] = { dept: d, wfh_req:0, wfh_days:0, ot_req:0, ot_hours:0, emps: new Set() };
+      deptMap[d].emps.add(r.employee_no);
+  });
+  flattenedWfhDays.forEach(r => {
+      const d = r.department || "Unassigned";
+      deptMap[d].wfh_days++;
+  });
+  filteredWfh.forEach(r => {
+      const d = r.department || "Unassigned";
+      deptMap[d].wfh_req++;
+  });
+  filteredOt.forEach(r => {
+      const d = r.department || "Unassigned";
+      deptMap[d].ot_req++;
+      deptMap[d].ot_hours += (r.duration_hours || 0);
+  });
+  const deptList = Object.values(deptMap).map(d => ({...d, emps: d.emps.size}));
+
+  // Top OT Employees
+  const empOtMap = {};
+  filteredOt.forEach(r => {
+      if(!empOtMap[r.employee_no]) empOtMap[r.employee_no] = { emp: r.name, id: r.employee_no, dept: r.department, req:0, hrs:0 };
+      empOtMap[r.employee_no].req++;
+      empOtMap[r.employee_no].hrs += (r.duration_hours || 0);
+  });
+  const topEmployees = Object.values(empOtMap).sort((a,b)=>b.hrs - a.hrs).slice(0, 5);
+
+  const pendingWfh = filteredWfh.filter(r => r.status === 'Pending Approval');
+  const pendingOt = filteredOt.filter(r => r.status === 'Pending Approval');
+
+  // WFH Status Chart
+  const statusPie = [
+      { name: 'Approved', value: approvedWfh, color: '#22c55e' },
+      { name: 'Pending', value: pendingWfh.length, color: '#eab308' },
+      { name: 'Rejected', value: filteredWfh.filter(r => r.status === 'Rejected').length, color: '#ef4444' }
+  ].filter(x => x.value > 0);
+
+  return (
+    <div className="p-6 bg-slate-50 min-h-screen">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-slate-800">{user.role === 'manager' ? "My Reports Dashboard" : "HR Analytics Dashboard"}</h2>
+        <div className="flex gap-4 items-center">
+            <select className="border p-2 rounded-lg font-medium shadow-sm bg-white" value={dateFilter} onChange={e=>setDateFilter(e.target.value)}>
+                <option>Today</option>
+                <option>This Week</option>
+                <option>This Month</option>
+                <option>Last Month</option>
+                <option>This Year</option>
+                <option>All Time</option>
+            </select>
+            <div className="flex gap-2">
+                <a href="/api/export/wfh" className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-sm flex items-center gap-2">⬇️ WFH Report</a>
+                <a href="/api/export/overtime" className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-sm flex items-center gap-2">⬇️ OT Report</a>
+            </div>
+        </div>
+      </div>
+
+      {user.role === 'system_admin' && (
+      <div className="flex gap-4 mb-6">
+          <button onClick={() => setAdminTab('global')} className={`px-4 py-2 font-bold rounded-lg ${adminTab === 'global' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}`}>Global Analytics</button>
+          <button onClick={() => setAdminTab('hierarchy')} className={`px-4 py-2 font-bold rounded-lg ${adminTab === 'hierarchy' ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}`}>My Reports Overview</button>
+
+      </div>
+      )}
+      
+      {adminTab === 'global' && (
+        <>
+
+
+      {filteredWfh.length === 0 && filteredOt.length === 0 && (
+          <div className="bg-white p-6 rounded-xl border border-dashed border-slate-300 text-center text-slate-500 mb-6 font-medium">
+              No data available for the selected period.
+          </div>
+      )}
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-blue-500">
+              <div className="text-xs font-bold text-slate-400 uppercase">WFH Requests</div>
+              <div className="text-3xl font-bold mt-1 text-slate-800">{filteredWfh.length}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1">{totalWFHDays} Total WFH Days</div>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-purple-500">
+              <div className="text-xs font-bold text-slate-400 uppercase">OT Requests</div>
+              <div className="text-3xl font-bold mt-1 text-slate-800">{filteredOt.length}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1">{totalOTHours.toFixed(1)} Total OT Hours</div>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-indigo-500">
+              <div className="text-xs font-bold text-slate-400 uppercase">Overnight OT</div>
+              <div className="text-3xl font-bold mt-1 text-slate-800">{overnightOt.toFixed(1)} <span className="text-sm font-normal">hrs</span></div>
+              <div className="text-xs font-medium text-slate-500 mt-1">Crossing Midnight</div>
+          </div>
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 border-t-4 border-t-emerald-500">
+              <div className="text-xs font-bold text-slate-400 uppercase">Active Employees</div>
+              <div className="text-3xl font-bold mt-1 text-slate-800">{Math.max(uniqueEmpWfh, uniqueEmpOt)}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1">Submitting requests</div>
+          </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {/* Charts */}
+          <div className="col-span-1 md:col-span-2 bg-white p-5 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="font-bold text-slate-700 mb-4">WFH Days by Weekday</h3>
+              <div className="h-64">
+                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
+                 wfhByDayChart.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={wfhByDayChart}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                          <Tooltip cursor={{fill: '#f8fafc'}} />
+                          <Bar dataKey="days" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={40} />
+                      </BarChart>
+                  </ResponsiveContainer>
+                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
+              </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="font-bold text-slate-700 mb-4">WFH Status</h3>
+              <div className="h-64">
+                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
+                 statusPie.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                          <Pie data={statusPie} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                              {statusPie.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
+                          </Pie>
+                          <Tooltip />
+                          <Legend verticalAlign="bottom" height={36}/>
+                      </PieChart>
+                  </ResponsiveContainer>
+                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
+              </div>
+          </div>
+          
+          <div className="col-span-1 md:col-span-3 bg-white p-5 rounded-xl shadow-sm border border-slate-100">
+              <h3 className="font-bold text-slate-700 mb-4">Overtime Hours by Department</h3>
+              <div className="h-64">
+                {!rechartsLoaded ? <div className="flex h-full items-center justify-center text-slate-400">Loading charts...</div> :
+                 deptList.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={deptList}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="dept" axisLine={false} tickLine={false} />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                          <Tooltip cursor={{fill: '#f8fafc'}} />
+                          <Bar dataKey="ot_hours" fill="#8b5cf6" radius={[4, 4, 0, 0]} barSize={50} />
+                      </BarChart>
+                  </ResponsiveContainer>
+                ) : <div className="flex h-full items-center justify-center text-slate-400">No data</div>}
+              </div>
+          </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6 mb-8">
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
+              <h3 className="font-bold text-slate-700 mb-4">Top Overtime Employees</h3>
+              {topEmployees.length > 0 ? (
+              <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500 uppercase text-xs"><tr><th className="p-2 rounded-l-lg">Employee</th><th className="p-2">Dept</th><th className="p-2">Reqs</th><th className="p-2 rounded-r-lg">Total Hours</th></tr></thead>
+                  <tbody className="divide-y">{topEmployees.map(e => (
+                      <tr key={e.id}><td className="p-2 font-bold">{e.emp}</td><td className="p-2">{e.dept || "-"}</td><td className="p-2">{e.req}</td><td className="p-2 font-bold text-blue-600">{e.hrs.toFixed(2)}</td></tr>
+                  ))}</tbody>
+              </table>) : <div className="text-slate-400">No data</div>}
+          </div>
+
+          <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 overflow-x-auto">
+              <h3 className="font-bold text-slate-700 mb-4">Department Summary</h3>
+              {deptList.length > 0 ? (
+              <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500 uppercase text-xs"><tr><th className="p-2 rounded-l-lg">Dept</th><th className="p-2">WFH Days</th><th className="p-2 rounded-r-lg">OT Hrs</th></tr></thead>
+                  <tbody className="divide-y">{deptList.map(d => (
+                      <tr key={d.dept}><td className="p-2 font-bold">{d.dept}</td><td className="p-2">{d.wfh_days}</td><td className="p-2 font-bold text-blue-600">{d.ot_hours.toFixed(2)}</td></tr>
+                  ))}</tbody>
+              </table>) : <div className="text-slate-400">No data</div>}
+          </div>
+      </div>
+      
+      {/* Pending Approvals */}
+      <h3 className="font-bold text-lg mb-2 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingWfh.length}</span> Pending WFH Approvals</h3>
+      {pendingWfh.length === 0 ? <div className="p-4 bg-white text-slate-500 rounded-lg mb-8 shadow-sm">No pending WFH requests in this period.</div> : (
+      <div className="overflow-x-auto"><table className="w-full text-left text-sm border rounded-xl overflow-hidden mb-8 shadow-sm"><thead className="bg-slate-50 border-b"><tr><th className="p-3">Emp</th><th className="p-3">Dates</th><th className="p-3">Type</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
+        <tbody className="divide-y bg-white">{pendingWfh.map(r => (
+          <tr key={r.id}>
+              <td className="p-3 font-bold text-slate-700">{r.name}</td>
+              <td className="p-3">
+                  {r.selected_dates ? safeJSONParse(r.selected_dates, []).map(d=>formatDateOnly(d)).join(", ") : formatDateOnly(r.date)}
+              </td>
+              <td className="p-3">{r.wfh_type}</td>
+              <td className="p-3"><StatusBadge status={r.status}/></td>
+              <td className="p-3 flex gap-2">
+                <button onClick={()=>handleAction('wfh', r.id, 'Approved')} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-green-200">Approve</button>
+                <button onClick={()=>handleAction('wfh', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
+                <button onClick={()=>handleAction('wfh', r.id, 'Returned')} className="bg-orange-100 text-orange-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-orange-200">Return</button>
+              </td>
+          </tr>
+        ))}</tbody>
+      </table></div>
+      )}
+
+      <h3 className="font-bold text-lg mb-2 flex items-center gap-2"><span className="bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm">{pendingOt.length}</span> Pending Overtime Approvals</h3>
+      {pendingOt.length === 0 ? <div className="p-4 bg-white text-slate-500 rounded-lg mb-8 shadow-sm">No pending OT requests in this period.</div> : (
+      <div className="overflow-x-auto"><table className="w-full text-left text-sm border rounded-xl overflow-hidden shadow-sm"><thead className="bg-slate-50 border-b"><tr><th className="p-3">Emp</th><th className="p-3">Start/End</th><th className="p-3">Hrs</th><th className="p-3">Status</th><th className="p-3">Action</th></tr></thead>
+        <tbody className="divide-y bg-white">{pendingOt.map(r => (
+          <tr key={r.id}><td className="p-3 font-bold text-slate-700">{r.name}</td><td className="p-3 text-xs leading-relaxed">{formatDateTime(r.start_datetime)} <br/> {formatDateTime(r.end_datetime)}</td><td className="p-3 font-bold text-blue-700">{(r.duration_hours || 0).toFixed(2)}</td><td className="p-3"><StatusBadge status={r.status}/></td>
+          <td className="p-3 flex gap-2">
+            <button onClick={()=>handleAction('ot', r.id, 'Approved')} className="bg-green-100 text-green-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-green-200">Approve</button>
+            <button onClick={()=>handleAction('ot', r.id, 'Rejected')} className="bg-red-100 text-red-700 px-3 py-1.5 rounded text-xs font-bold hover:bg-red-200">Reject</button>
+          </td></tr>
+        ))}</tbody>
+      </table></div>
+      )}
+
+        </>
+      )}
+
+
+
+      {adminTab === 'hierarchy' && (
+          <HierarchyOverview 
+              wfh={filteredWfh} 
+              overtime={filteredOt} 
+              hierarchy={hierarchy} 
+              users={users} 
+              viewFilter={viewFilter} 
+              setViewFilter={setViewFilter} 
+              dateFilter={dateFilter}
+              formatDateOnly={formatDateOnly}
+              getWFHDaysCount={getWFHDaysCount}
+              user={user}
+              handleAction={handleAction}
+          />
+      )}
+    </div>
+  );
+}
+
+
 function AdminSettings() {
     const [settings, setSettings] = useState({ admin_email: "", max_wfh_days: 2 });
     const [msg, setMsg] = useState("");
@@ -645,4 +1250,4 @@ function AdminSettings() {
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<ErrorBoundary><App /></ErrorBoundary>);

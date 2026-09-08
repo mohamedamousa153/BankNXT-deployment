@@ -165,7 +165,7 @@ def login(creds: schemas.UserLogin, db: Session = Depends(get_db)):
             resolved_role = "system_admin"
         elif auth_result.get("user_dn"):
             # Check if this user has any subordinates in AD
-            subs = ldap_service.get_ad_subordinates_recursive(db, auth_result.get("user_dn"), config)
+            subs = ldap_service.get_ad_subordinates_recursive(auth_result.get("user_dn"), config, db)
             if subs and len(subs) > 0:
                 resolved_role = "manager"
         

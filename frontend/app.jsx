@@ -285,7 +285,10 @@ function Overtime({ user }) {
           </div>
           <div><label className="block text-xs font-bold mb-1">Assigned Work</label><input type="text" required className="w-full border p-2 rounded" value={formData.assigned_work} onChange={e=>setFormData({...formData, assigned_work:e.target.value})}/></div>
           <div><label className="block text-xs font-bold mb-1">Notes</label><input type="text" className="w-full border p-2 rounded" value={formData.notes} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
-          <div className="col-span-2 flex justify-end"><button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Submit Request</button></div>
+          <div className="col-span-2 flex justify-between items-center">
+            <div className="text-sm text-slate-500">Manager / Approver: <span className="font-bold text-slate-700">{user.manager_name || "Not Assigned"}</span></div>
+            <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Submit Request</button>
+          </div>
         </form>
         
         <h3 className="font-bold text-lg mb-4">My Past Records</h3>
@@ -297,7 +300,8 @@ function Overtime({ user }) {
                 <td className="p-3 font-bold text-blue-700">{(r.duration_hours || 0).toFixed(2)}h</td>
                 <td className="p-3"><StatusBadge status={r.status}/></td>
                 <td className="p-3 text-xs text-slate-600">
-                    {r.approved_by ? <><span className="font-bold text-slate-800">{r.approved_by}</span><br/>{formatDateTime(r.approval_date)}<br/><i className="text-slate-500">{r.manager_comment}</i></> : '-'}
+                    <div className="mb-1"><span className="text-slate-400">Approver:</span> <span className="font-bold">{r.approver_name || "Not Assigned"}</span></div>
+                    {r.approved_by ? <><span className="text-slate-400">Action by:</span> <span className="font-bold text-slate-800">{r.approved_by}</span><br/>{formatDateTime(r.approval_date)}<br/><i className="text-slate-500">{r.manager_comment}</i></> : ''}
                 </td>
                 <td className="p-3">{r.status === 'Pending Approval' && <button onClick={()=>handleDelete(r.id)} className="text-red-500 font-bold hover:underline">Cancel</button>}</td>
             </tr>
@@ -449,7 +453,10 @@ function WFH({ user }) {
                   <div><label className="block text-xs font-bold mb-1">End Time</label><FlatpickrInput type="time" value={formData.end_time} onChange={v=>setFormData(prev=>({...prev, end_time: v}))} placeholder="AM/PM Time"/></div>
               </>)}
           </div>
-          <div className="mt-6 flex justify-end"><button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Submit Request</button></div>
+          <div className="mt-6 flex justify-between items-center">
+            <div className="text-sm text-slate-500">Manager / Approver: <span className="font-bold text-slate-700">{user.manager_name || "Not Assigned"}</span></div>
+            <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded font-bold hover:bg-blue-700 transition-colors">Submit Request</button>
+          </div>
         </form>
 
         <h3 className="font-bold text-lg mb-4">My WFH History</h3>
@@ -482,7 +489,8 @@ function WFH({ user }) {
                   <td className="p-3 text-xs">{formatDateOnly(r.created_at)}</td>
                   <td className="p-3"><StatusBadge status={r.status}/></td>
                   <td className="p-3 text-xs text-slate-600">
-                      {r.approved_by ? <><span className="font-bold text-slate-800">{r.approved_by}</span><br/>{formatDateTime(r.approval_date)}<br/><i className="text-slate-500">{r.manager_comment}</i></> : '-'}
+                      <div className="mb-1"><span className="text-slate-400">Approver:</span> <span className="font-bold">{r.approver_name || "Not Assigned"}</span></div>
+                      {r.approved_by ? <><span className="text-slate-400">Action by:</span> <span className="font-bold text-slate-800">{r.approved_by}</span><br/>{formatDateTime(r.approval_date)}<br/><i className="text-slate-500">{r.manager_comment}</i></> : ''}
                   </td>
                   <td className="p-3">{r.status === 'Pending Approval' && <button onClick={()=>handleDelete(r.id)} className="text-red-500 font-bold hover:underline">Cancel</button>}</td>
               </tr>
@@ -996,8 +1004,8 @@ function AdminDashboard({ user }) {
   });
   const topEmployees = Object.values(empOtMap).sort((a,b)=>b.hrs - a.hrs).slice(0, 5);
 
-  const pendingWfh = filteredWfh.filter(r => r.status === 'Pending Approval');
-  const pendingOt = filteredOt.filter(r => r.status === 'Pending Approval');
+  const pendingWfh = filteredWfh.filter(r => r.status === 'Pending Approval' && (user.role === 'system_admin' || !r.approver_dn || r.approver_dn === user.user_dn));
+  const pendingOt = filteredOt.filter(r => r.status === 'Pending Approval' && (user.role === 'system_admin' || !r.approver_dn || r.approver_dn === user.user_dn));
 
   // WFH Status Chart
   const statusPie = [

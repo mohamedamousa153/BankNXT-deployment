@@ -247,6 +247,8 @@ def create_overtime(record: schemas.OvertimeCreate, current_user: models.User = 
         **record_dict,
         duration_hours=duration_hours,
         status="Pending Approval",
+        approver_dn=current_user.manager_dn,
+        approver_name=current_user.manager_name,
         created_at=datetime.now().isoformat()
     )
     db.add(db_record)
@@ -260,9 +262,16 @@ def update_overtime(record_id: int, update_data: dict, current_user: models.User
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    allowed_nos = get_allowed_employee_nos(db, current_user)
-    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
-        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
+    # Strict Direct-Manager Authorization for Updates
+    if current_user.role != "system_admin":
+        if getattr(db_record, "approver_dn", None):
+            if db_record.approver_dn != current_user.user_dn:
+                raise HTTPException(status_code=403, detail="Forbidden: You are not the direct manager assigned to approve this request.")
+        else:
+            # Legacy fallback
+            allowed_nos = get_allowed_employee_nos(db, current_user)
+            if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+                raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
 
         
     if "status" in update_data and update_data["status"] in ["Approved", "Rejected"]:
@@ -431,6 +440,8 @@ def create_wfh(record: schemas.WFHCreate, current_user: models.User = Depends(ge
     
     db_record = models.WFHRecord(
         **record_dict,
+        approver_dn=current_user.manager_dn,
+        approver_name=current_user.manager_name,
         week_number=w,
         year=y,
         status="Pending Approval", 
@@ -447,9 +458,16 @@ def update_wfh(record_id: int, update_data: dict, current_user: models.User = De
     if not db_record:
         raise HTTPException(status_code=404, detail="Record not found")
         
-    allowed_nos = get_allowed_employee_nos(db, current_user)
-    if allowed_nos is not None and db_record.employee_no not in allowed_nos:
-        raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
+    # Strict Direct-Manager Authorization for Updates
+    if current_user.role != "system_admin":
+        if getattr(db_record, "approver_dn", None):
+            if db_record.approver_dn != current_user.user_dn:
+                raise HTTPException(status_code=403, detail="Forbidden: You are not the direct manager assigned to approve this request.")
+        else:
+            # Legacy fallback
+            allowed_nos = get_allowed_employee_nos(db, current_user)
+            if allowed_nos is not None and db_record.employee_no not in allowed_nos:
+                raise HTTPException(status_code=403, detail="Forbidden: Not authorized to access this record.")
 
     
     if "status" in update_data and update_data["status"] in ["Approved", "Rejected", "Returned"]:

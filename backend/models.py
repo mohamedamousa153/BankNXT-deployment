@@ -39,6 +39,8 @@ class OvertimeRecord(Base):
     notes = Column(String, nullable=True)
     status = Column(String, default="Pending Approval")
     
+    approver_dn = Column(String, nullable=True)
+    approver_name = Column(String, nullable=True)
     approved_by = Column(String)
     approval_date = Column(String)
     manager_comment = Column(String)
@@ -64,6 +66,8 @@ class WFHRecord(Base):
     year = Column(Integer)
     status = Column(String, default="Pending Approval")
     
+    approver_dn = Column(String, nullable=True)
+    approver_name = Column(String, nullable=True)
     approved_by = Column(String)
     approval_date = Column(String)
     manager_comment = Column(String)

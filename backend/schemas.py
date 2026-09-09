@@ -16,6 +16,7 @@ class User(BaseModel):
     manager_dn: Optional[str] = None
     manager_name: Optional[str] = None
     session_token: Optional[str] = None
+    has_direct_reports: Optional[bool] = False
     
     class Config:
         from_attributes = True

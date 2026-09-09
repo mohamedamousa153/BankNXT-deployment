@@ -162,25 +162,24 @@ function App() {
         <aside className="w-64 flex-shrink-0 flex flex-col gap-2">
           <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-3 flex flex-col gap-1">
             <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-3 pt-2">Menu</div>
-            {!user.is_admin ? (
-              <>
-                <NavButton active={activeTab === 'overtime'} onClick={() => setActiveTab('overtime')} icon="🕒">Log Overtime</NavButton>
-                <NavButton active={activeTab === 'wfh'} onClick={() => setActiveTab('wfh')} icon="🏠">Schedule WFH</NavButton>
-              </>
-            ) : (
-              <>
-                <NavButton active={activeTab === 'admin-dashboard'} onClick={() => setActiveTab('admin-dashboard')} icon={user.role === 'manager' ? "👥" : "📊"}>{user.role === 'manager' ? "My Reports" : "Global Dashboard"}</NavButton>
-                {user.role === 'system_admin' && <NavButton active={activeTab === 'admin-settings'} onClick={() => setActiveTab('admin-settings')} icon="⚙️">Settings</NavButton>}
-              </>
+            <NavButton active={activeTab === 'overtime'} onClick={() => setActiveTab('overtime')} icon="🕒">Log Overtime</NavButton>
+            <NavButton active={activeTab === 'wfh'} onClick={() => setActiveTab('wfh')} icon="🏠">Schedule WFH</NavButton>
+            
+            {(user.has_direct_reports || user.role === 'system_admin') && (
+                <>
+                <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 px-3 pt-4 border-t mt-2">Management</div>
+                <NavButton active={activeTab === 'admin-dashboard'} onClick={() => setActiveTab('admin-dashboard')} icon={user.role === 'system_admin' ? "📊" : "👥"}>{user.role === 'system_admin' ? "Global Dashboard" : "My Reports"}</NavButton>
+                </>
             )}
+            {user.role === 'system_admin' && <NavButton active={activeTab === 'admin-settings'} onClick={() => setActiveTab('admin-settings')} icon="⚙️">Settings</NavButton>}
           </div>
         </aside>
 
         <main className="flex-1 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden overflow-y-auto min-h-[80vh]">
-          {!user.is_admin && activeTab === 'overtime' && <Overtime user={user} />}
-          {!user.is_admin && activeTab === 'wfh' && <WFH user={user} />}
-          {user.is_admin && activeTab === 'admin-dashboard' && <AdminDashboard user={user} />}
-          {user.is_admin && activeTab === 'admin-settings' && <AdminSettings />}
+          {activeTab === 'overtime' && <Overtime user={user} />}
+          {activeTab === 'wfh' && <WFH user={user} />}
+          {(user.has_direct_reports || user.role === 'system_admin') && activeTab === 'admin-dashboard' && <AdminDashboard user={user} />}
+          {user.role === 'system_admin' && activeTab === 'admin-settings' && <AdminSettings />}
         </main>
       </div>
     </div>
@@ -839,7 +838,7 @@ function AdminDashboard({ user }) {
   const [hierarchy, setHierarchy] = useState({direct_reports: [], all_subordinates: []});
   const [viewFilter, setViewFilter] = useState('direct');
   const [users, setUsers] = useState([]);
-  const [adminTab, setAdminTab] = useState(user.role === 'manager' ? 'hierarchy' : 'global');
+  const [adminTab, setAdminTab] = useState(user.role === 'system_admin' ? 'global' : 'hierarchy');
   
 
   const fetchData = async () => {
@@ -1017,7 +1016,7 @@ function AdminDashboard({ user }) {
   return (
     <div className="p-6 bg-slate-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">{user.role === 'manager' ? "My Reports Dashboard" : "HR Analytics Dashboard"}</h2>
+        <h2 className="text-2xl font-bold text-slate-800">{user.role === 'system_admin' ? "HR Analytics Dashboard" : "My Reports Dashboard"}</h2>
         <div className="flex gap-4 items-center">
             <select className="border p-2 rounded-lg font-medium shadow-sm bg-white" value={dateFilter} onChange={e=>setDateFilter(e.target.value)}>
                 <option>Today</option>
